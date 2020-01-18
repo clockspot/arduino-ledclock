@@ -18,10 +18,11 @@ const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of th
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP Udp; // A UDP instance to let us send and receive packets over UDP
 
-////////// RTC //////////
-#include <RTCZero.h>
-RTCZero rtc;
+////////// FAKE RTC using millis //////////
+unsigned long todMils = 0; //time of day in milliseconds
 #define OFFSET -21600 //we are this many seconds behind UTC
+#define ANTI_DRIFT 0 //msec to add per second - or seconds to add per day divided by 86.4
+//Doesn't have to be perfect – just enough for decent timekeeping display until the next ntp sync
 
 ////////// DISPLAY //////////
 #define NUM_MAX 4
@@ -37,16 +38,15 @@ LedControl lc=LedControl(DIN_PIN,CLK_PIN,CS_PIN,NUM_MAX);
 void setup() {
   Serial.begin(9600); while (!Serial) {;}
   startWiFi();
-  rtc.begin();
   for(int i=0; i<NUM_MAX; i++) { lc.shutdown(i,false); lc.setIntensity(i,8); }
   //TODO create a new connection to server and close it every time? is that necessary for UDP? what about TCP?
   Serial.println("\nStarting connection to server...");
   Udp.begin(localPort);
-  //startNTP(); //checkRTC will handle this - except when repowering
+  startNTP();
 }
 
 void loop() {
-  checkRTC();
+  checkRTC(false);
   checkNTP();
 }
 
@@ -101,11 +101,12 @@ void printWiFiStatus() {
 
 ////////// NTP //////////
 bool checkingNTP = false;
+unsigned long checkNTPStart = 0;
 
 void startNTP(){ //Called at intervals to check for ntp time
   if(!checkingNTP) {
-    Serial.println(F("NTP call started"));
     checkingNTP = true;
+    checkNTPStart = millis();
     sendNTPpacket(timeServer); // send an NTP packet to a time server
   }
 } //end fn startNTP
@@ -142,8 +143,6 @@ unsigned long sendNTPpacket(IPAddress& address) {
 
 void checkNTP(){ //Called on every cycle to see if there is an ntp response to handle
   if(checkingNTP && Udp.parsePacket()) {
-    Serial.println(F("NTP packet received"));
-    checkingNTP = false;
     // We've received a packet, read the data from it
     Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
 
@@ -155,77 +154,69 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
     // combine the four bytes (two words) into a long integer
     // this is NTP time (seconds since Jan 1 1900):
     unsigned long secsSince1900 = highWord << 16 | lowWord;
-    //Serial.print("Seconds since Jan 1 1900 = ");
-    //Serial.println(secsSince1900);
+    //TODO I suppose secsSince1900 has been adjusted for leap seconds?
+    secsSince1900 += OFFSET;
 
-    // now convert NTP time into everyday time:
-    //Serial.print("Unix time = ");
-    // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-    const unsigned long seventyYears = 2208988800UL;
-    // subtract seventy years:
-    unsigned long epoch = secsSince1900 - seventyYears;
-
-    rtc.setEpoch(epoch+OFFSET);
+    unsigned int requestTime = millis()-checkNTPStart; //this handles rollovers OK b/c 2-(max-2) = 4
+    
+    unsigned long newtodMils = (secsSince1900%86400)*1000+(requestTime/2); //TODO plus mils? //add half the request time
+    unsigned int drift = todMils-newtodMils;
+    todMils = newtodMils;
+    
+    Serial.print(F("NTP request took ")); Serial.print(requestTime,DEC); Serial.println(F("ms."));
+    Serial.print(F("RTC is off by ")); Serial.print(drift); Serial.println(F(" (sec res and request time notwithstanding)."));
     Serial.print(F("RTC set to ")); printRTCTime(); Serial.println();
+    checkingNTP = false;
+    checkRTC(true);
   }
 } //end fn checkNTP
 
 
 ////////// RTC and NTP //////////
 byte rtcSecLast = 61;
-void checkRTC(){
-  //we can't do a snapshot but should be ok because only triggered after a seconds value change
-  if(rtcSecLast != rtc.getSeconds()){ //A new second! Do stuff!
-    rtcSecLast = rtc.getSeconds();
-    //Trigger time update at top of each minute
-    if(rtc.getSeconds()==0 && rtc.getMinutes()%5==0){
-      Serial.print(F("According to RTC, it's ")); printRTCTime(); Serial.println(F(" - time for an NTP check"));
+unsigned long millisLast = 0;
+bool justAppliedAntiDrift = 0;
+void checkRTC(bool justSet){
+  if(!justSet){ //if we haven't just set the fake "rtc", let's increment it
+    unsigned long millisSnap = millis();
+    todMils += millisSnap-millisLast;
+    millisLast=millisSnap;
+  }
+  int rtcMin = ((todMils/1000)/60)%60;
+  int rtcSec = (todMils/1000)%60;
+  if(rtcSecLast != rtcSec || justSet){ //A new second!
+    if(!justSet && !justAppliedAntiDrift){ //Apply anti-drift each time we naturally reach a new second
+      //If it's negative, we'll set todMils back and set a flag, so we don't do it again at the upcoming "real" new second.
+      //We shouldn't need to check if we'll be setting it back past zero, as we won't have done the midnight rollover yet (below)
+      //and at the first second past midnight, todMils will almost certainly be larger than ANTI_DRIFT.
+      todMils += ANTI_DRIFT;
+      if(ANTI_DRIFT<0) justAppliedAntiDrift = 1;
+    } else justAppliedAntiDrift = 0;
+    //Now we can assume todMils is accurate
+    if(todMils>86400000) todMils-=86400000; //is this a new day? set it back 24 hours
+    if(!justSet && rtcSec==0 && rtcMin==0){ //Trigger NTP update at top of the hour
+      Serial.println(F("Time for an NTP check"));
       startNTP();
     }
-    //Display time on LEDs
-    displayHMS(rtc.getHours(),rtc.getMinutes(),rtc.getSeconds());
+    displayTime(); //Display time on LEDs
+    rtcSecLast = rtcSec; //register that we have done stuff
   } //end if new second
 } //end fn checkRTC
 
 void printRTCTime(){
-  // Serial.print(rtc.getYear());
-  // Serial.print("/");
-  // Serial.print(rtc.getMonth());
-  // Serial.print("/");
-  // Serial.print(rtc.getDay());
-  // Serial.print(" ");
-  if(rtc.getHours()<10) Serial.print(F("0"));
-  Serial.print(rtc.getHours()); //gmt/offset malarkey
-  Serial.print(F(":"));
-  if(rtc.getMinutes()<10) Serial.print(F("0"));
-  Serial.print(rtc.getMinutes());
-  Serial.print(F(":"));
-  if(rtc.getSeconds()<10) Serial.print(F("0"));
-  Serial.print(rtc.getSeconds());
+  unsigned long todSecs = todMils/1000;
+  int rtcHrs = (todMils/1000)/3600; //rtc.getHours() - 43195/3600 = 11hrs
+  int rtcMin = ((todMils/1000)/60)%60; //rtc.getMinutes() - (43195/60)=719min, 719%60=59min
+  int rtcSec = (todMils/1000)%60; //rtc.getSeconds() - 43195%60 = 55sec
+  if(rtcHrs<10) Serial.print(F("0")); Serial.print(rtcHrs); Serial.print(F(":"));
+  if(rtcMin<10) Serial.print(F("0")); Serial.print(rtcMin); Serial.print(F(":"));
+  if(rtcSec<10) Serial.print(F("0")); Serial.print(rtcSec);
 }
 
 
 ////////// LED DISPLAY //////////
 
-// //Binary counter display test
-// byte lastAddr = NUM_MAX-1;
-// byte lastCol = 7;
-// byte lastCount = 0; //max 255
-// void testDisplay(){
-//   while(true){
-//     lastAddr++; if(lastAddr>=NUM_MAX){
-//       lastAddr=0; lastCount++; if(lastCount>=255){
-//         lastCount=0;
-//       }
-//     }
-//     lastCol++; if(lastCol>=8) lastCol=0;
-//     Serial.print(F("Setting ")); Serial.print(lastAddr,DEC);
-//     Serial.print(F("/")); Serial.print(lastCol,DEC);
-//     Serial.print(F(" to ")); Serial.println(lastCount,DEC);
-//     lc.setColumn((NUM_MAX-1)-lastAddr,lastCol,lastCount);
-//     delay(250);
-//   }
-// }
+//See commit fb1419c for binary counter display test
 
 byte smallnum[30]={
   B11111100, B10000100, B11111100, // 0
@@ -252,40 +243,22 @@ byte bignum[50]={
   B00001110, B10011111, B11010001, B01111111, B00111110  // 9
 };
 
-void displayHMS(int h, int m, int s){
-  if(h>24 || h<0) h=0;
-  if(m>60 || m<0) m=0;
-  if(s>60 || s<0) s=0;
-  int ci = (NUM_MAX*8)-1; //column index
-  //display = (NUM_MAX-1)-(ci/8)
-  //dispcol = ci%8
+void displayTime(){
+  unsigned long todSecs = todMils/1000; if(todSecs>=86400) todSecs=0;
+  int rtcHrs = (todMils/1000)/3600; //rtc.getHours() - 43195/3600 = 11hr
+  int rtcMin = ((todMils/1000)/60)%60; //rtc.getMinutes() - (43195/60)=719min, 719%60=59min
+  int rtcSec = (todMils/1000)%60; //rtc.getSeconds() - 43195%60 = 55sec
+  int ci = (NUM_MAX*8)-1; //total column index - we will start at the last one and move backward
+  //display index = (NUM_MAX-1)-(ci/8)
+  //display column index = ci%8
   //big numbers are 5 pixels wide; small ones are 3 pixels wide
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(h/10)*5+i]); ci--; } ci--; //h tens + 1 col gap
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(h%10)*5+i]); ci--; } ci--; ci--; //h ones + 2 col gap
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(m/10)*5+i]); ci--; } ci--; //m tens + 1 col gap
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(m%10)*5+i]); ci--; } ci--; //m ones + 1 col gap
-  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(s/10)*3+i]); ci--; } ci--; //s tens + 1 col gap
-  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(s%10)*3+i]); ci--; }       //s ones
+  if(rtcHrs<10) ci-=5; else //leading blank instead of zero
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcHrs/10)*5+i]); ci--; } ci--; //h tens + 1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcHrs%10)*5+i]); ci--; } ci--; ci--; //h ones + 2col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin/10)*5+i]); ci--; } ci--; //m tens + 1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin%10)*5+i]); ci--; } ci--; //m ones + 1col gap
+  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec/10)*3+i]); ci--; } ci--; //s tens + 1col gap
+  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec%10)*3+i]); ci--; }       //s ones
 }
 
-
-// //Serial input control if we need it for live config
-// void setup(){
-//   Serial.begin(9600); while(!Serial){ ; }
-//   Serial.println("Hello world!");
-// }
-// int incomingByte = 0;
-// void loop(){
-//   if(Serial.available()>0){
-//     incomingByte = Serial.read();
-//     switch(incomingByte){
-//       case 96: clear
-//         Serial.println
-//         break;
-//       default: break;
-//     }
-//     Serial.print("I received: ");
-//     Serial.println(incomingByte, DEC);
-//   }
-// }
-//
+//See commit fb1419c for serial input control if needed for runtime config
