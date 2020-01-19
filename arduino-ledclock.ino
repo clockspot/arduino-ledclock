@@ -39,9 +39,6 @@ void setup() {
   Serial.begin(9600); while (!Serial) {;}
   startWiFi();
   for(int i=0; i<NUM_MAX; i++) { lc.shutdown(i,false); lc.setIntensity(i,8); }
-  //TODO create a new connection to server and close it every time? is that necessary for UDP? what about TCP?
-  Serial.println("\nStarting connection to server...");
-  Udp.begin(localPort);
   startNTP();
 }
 
@@ -102,10 +99,14 @@ void printWiFiStatus() {
 ////////// NTP //////////
 bool checkingNTP = false;
 unsigned long checkNTPStart = 0;
+bool checkNTPSuccess = false;
 
 void startNTP(){ //Called at intervals to check for ntp time
   if(!checkingNTP) {
     checkingNTP = true;
+    Serial.println("Starting connection to NTP server...");
+    //TODO create a new connection to server and close it every time? is that necessary for UDP? what about TCP?
+    Udp.begin(localPort);
     checkNTPStart = millis();
     sendNTPpacket(timeServer); // send an NTP packet to a time server
   }
@@ -142,32 +143,42 @@ unsigned long sendNTPpacket(IPAddress& address) {
 }
 
 void checkNTP(){ //Called on every cycle to see if there is an ntp response to handle
-  if(checkingNTP && Udp.parsePacket()) {
-    // We've received a packet, read the data from it
-    Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+  if(checkingNTP){
+    if(Udp.parsePacket()) { //testing failure every other minute: && ((todMils/1000)/60)%2==0
+      // We've received a packet, read the data from it
+      Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+      Udp.stop();
 
-    //the timestamp starts at byte 40 of the received packet and is four bytes,
-    // or two words, long. First, esxtract the two words:
+      //the timestamp starts at byte 40 of the received packet and is four bytes,
+      // or two words, long. First, esxtract the two words:
 
-    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-    // combine the four bytes (two words) into a long integer
-    // this is NTP time (seconds since Jan 1 1900):
-    unsigned long secsSince1900 = highWord << 16 | lowWord;
-    //TODO I suppose secsSince1900 has been adjusted for leap seconds?
-    secsSince1900 += OFFSET;
+      unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+      unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+      // combine the four bytes (two words) into a long integer
+      // this is NTP time (seconds since Jan 1 1900):
+      unsigned long secsSince1900 = highWord << 16 | lowWord;
+      //TODO I suppose secsSince1900 has been adjusted for leap seconds?
+      secsSince1900 += OFFSET;
 
-    unsigned int requestTime = millis()-checkNTPStart; //this handles rollovers OK b/c 2-(max-2) = 4
+      unsigned int requestTime = millis()-checkNTPStart; //this handles rollovers OK b/c 2-(max-2) = 4
     
-    unsigned long newtodMils = (secsSince1900%86400)*1000+(requestTime/2); //TODO plus mils? //add half the request time
-    unsigned int drift = todMils-newtodMils;
-    todMils = newtodMils;
+      unsigned long newtodMils = (secsSince1900%86400)*1000+(requestTime/2); //TODO plus mils? //add half the request time
+      int drift = todMils-newtodMils;
+      todMils = newtodMils;
     
-    Serial.print(F("NTP request took ")); Serial.print(requestTime,DEC); Serial.println(F("ms."));
-    Serial.print(F("RTC is off by ")); Serial.print(drift); Serial.println(F(" (sec res and request time notwithstanding)."));
-    Serial.print(F("RTC set to ")); printRTCTime(); Serial.println();
-    checkingNTP = false;
-    checkRTC(true);
+      Serial.print(F("NTP request took ")); Serial.print(requestTime,DEC); Serial.println(F("ms."));
+      Serial.print(F("RTC is off by ")); Serial.print(drift,DEC); Serial.println(F(" (sec res and request time notwithstanding)."));
+      Serial.print(F("RTC set to ")); printRTCTime(); Serial.println();
+      checkingNTP = false;
+      checkNTPSuccess = true;
+      checkRTC(true);
+    }
+    else if(millis()-checkNTPStart>5000){
+      Udp.stop();
+      Serial.println(F("Couldn't connect to NTP server"));
+      checkingNTP = false;
+      checkNTPSuccess = false;
+    }
   }
 } //end fn checkNTP
 
@@ -191,6 +202,7 @@ void checkRTC(bool justSet){
       //and at the first second past midnight, todMils will almost certainly be larger than ANTI_DRIFT.
       todMils += ANTI_DRIFT;
       if(ANTI_DRIFT<0) justAppliedAntiDrift = 1;
+      //TODO if we set back a second, need to apply the above and not run the below
     } else justAppliedAntiDrift = 0;
     //Now we can assume todMils is accurate
     if(todMils>86400000) todMils-=86400000; //is this a new day? set it back 24 hours
@@ -218,17 +230,29 @@ void printRTCTime(){
 
 //See commit fb1419c for binary counter display test
 
+// byte smallnum[30]={
+//   B11111100, B10000100, B11111100, // 0
+//   B00001000, B11111100, B00000000, // 1
+//   B11100100, B10100100, B10111100, // 2
+//   B10000100, B10010100, B11111100, // 3
+//   B00111000, B00100000, B11111100, // 4
+//   B10011100, B10010100, B11110100, // 5
+//   B11111100, B10010100, B11110100, // 6
+//   B00000100, B00000100, B11111100, // 7
+//   B11111100, B10010100, B11111100, // 8
+//   B00111100, B00100100, B11111100  // 9
+// };
 byte smallnum[30]={
-  B11111100, B10000100, B11111100, // 0
-  B00001000, B11111100, B00000000, // 1
-  B11100100, B10100100, B10111100, // 2
-  B10000100, B10010100, B11111100, // 3
-  B00111000, B00100000, B11111100, // 4
-  B10011100, B10010100, B11110100, // 5
-  B11111100, B10010100, B11110100, // 6
-  B00000100, B00000100, B11111100, // 7
-  B11111100, B10010100, B11111100, // 8
-  B00111100, B00100100, B11111100  // 9
+  B11111000, B10001000, B11111000, // 0
+  B00010000, B11111000, B00000000, // 1
+  B11101000, B10101000, B10111000, // 2
+  B10001000, B10101000, B11111000, // 3
+  B01110000, B01000000, B11111000, // 4
+  B10111000, B10101000, B11101000, // 5
+  B11111000, B10101000, B11101000, // 6
+  B00001000, B00001000, B11111000, // 7
+  B11111000, B10101000, B11111000, // 8
+  B00111000, B00101000, B11111000  // 9
 };
 byte bignum[50]={
   B01111110, B11111111, B10000001, B11111111, B01111110, // 0
@@ -252,13 +276,13 @@ void displayTime(){
   //display index = (NUM_MAX-1)-(ci/8)
   //display column index = ci%8
   //big numbers are 5 pixels wide; small ones are 3 pixels wide
-  if(rtcHrs<10) ci-=5; else //leading blank instead of zero
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcHrs/10)*5+i]); ci--; } ci--; //h tens + 1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcHrs<10?0:bignum[(rtcHrs/10)*5+i])); ci--; } ci--; //h tens + 1col gap (leading blank instead of zero)
   for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcHrs%10)*5+i]); ci--; } ci--; ci--; //h ones + 2col gap
   for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin/10)*5+i]); ci--; } ci--; //m tens + 1col gap
   for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin%10)*5+i]); ci--; } ci--; //m ones + 1col gap
   for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec/10)*3+i]); ci--; } ci--; //s tens + 1col gap
-  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec%10)*3+i]); ci--; }       //s ones
+  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec%10)*3+i]+(i==2&&!checkNTPSuccess?1:0)); ci--; } //s ones, plus ntp success light if necessary
+  
 }
 
 //See commit fb1419c for serial input control if needed for runtime config
