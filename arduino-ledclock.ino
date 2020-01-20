@@ -382,6 +382,7 @@ void displayClear(){
   for(int i=0; i<NUM_MAX; i++) { lc.clearDisplay(i); }
 }
 
+int curBrightness = 8;
 void displayBrightness(int brightness){
   for(int i=0; i<NUM_MAX; i++) { lc.setIntensity(i,brightness); }
 }
@@ -432,6 +433,17 @@ void checkSerialInput(){
       case 100: //d
         Serial.print(F("rtcDate is ")); Serial.println(rtcDate,DEC);
         break;
+      case 98: //b
+        switch(curBrightness){
+          case 0: curBrightness = 1; break;
+          case 1: curBrightness = 8; break;
+          case 8: curBrightness = 15; break;
+          case 15: curBrightness = 0; break;
+          default: break;
+        }
+        Serial.print(F("Changing brightness to ")); Serial.print(curBrightness,DEC); Serial.println(F("/15"));
+        displayBrightness(curBrightness);
+        break;
       case 49: //1
       case 50: //2
       case 51: //3
@@ -443,7 +455,6 @@ void checkSerialInput(){
       case 57: //9
       case 48: //0
       case 97: //a
-      case 98: //b
       case 99: //c
       case 101: //e
       case 103: //g
