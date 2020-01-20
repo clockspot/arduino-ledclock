@@ -50,6 +50,7 @@ void loop() {
 
 
 ////////// WIFI //////////
+bool wifiConnected = false;
 void startWiFi(){
   // check for the WiFi module:
   if (WiFi.status() == WL_NO_MODULE) {
@@ -63,19 +64,21 @@ void startWiFi(){
     Serial.println("Please upgrade the firmware");
   }
 
-  // attempt to connect to WiFi network:
-  while (status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(ssid);
+  // // attempt to connect to WiFi network:
+  // while (status != WL_CONNECTED) {
+    Serial.print(F("Attempting to connect to SSID: "));
+    Serial.print(ssid);
+    Serial.print(F(" at "));
+    Serial.println(millis(),DEC);
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
-    status = WiFi.begin(ssid, pass);
+    //status = 
+    WiFi.begin(ssid, pass);
+    Serial.print(F("Completed WiFi.begin at todMils "));
+    Serial.println(millis(),DEC);
 
-    // wait for connection
-    delay(2000);
-  }
-
-  Serial.println("Connected to wifi");
-  printWiFiStatus();
+  //   // wait for connection
+  //   delay(2000);
+  // }
 }
 
 void printWiFiStatus() {
@@ -102,14 +105,26 @@ unsigned long checkNTPStart = 0;
 bool checkNTPSuccess = false;
 
 void startNTP(){ //Called at intervals to check for ntp time
-  if(!checkingNTP) {
-    checkingNTP = true;
-    Serial.println("Starting connection to NTP server...");
-    //TODO create a new connection to server and close it every time? is that necessary for UDP? what about TCP?
-    Udp.begin(localPort);
-    checkNTPStart = millis();
-    sendNTPpacket(timeServer); // send an NTP packet to a time server
-  }
+  if(!checkingNTP) { //if not already checking NTP
+    if(WiFi.status()==WL_CONNECTED){ //are we connected to wifi?
+      if(!wifiConnected){ //did we just connect?
+        wifiConnected = 1;
+        Serial.println("Connected to wifi");
+        printWiFiStatus();
+      }
+      checkingNTP = true; //ok to go!
+      Serial.println("Starting connection to NTP server...");
+      //TODO create a new connection to server and close it every time? is that necessary for UDP? what about TCP?
+      Udp.begin(localPort);
+      checkNTPStart = millis();
+      sendNTPpacket(timeServer); // send an NTP packet to a time server
+    } else { //not connected to wifi
+      Serial.println("Not connected to WiFi. Trying to connect, and we'll try NTP again in a minute.");
+      wifiConnected = 0;
+      checkNTPSuccess = 0;
+      startWiFi();
+    } //end not connected to wifi
+  } //end if not already checking NTP
 } //end fn startNTP
 
 unsigned long sendNTPpacket(IPAddress& address) {
@@ -206,7 +221,7 @@ void checkRTC(bool justSet){
     } else justAppliedAntiDrift = 0;
     //Now we can assume todMils is accurate
     if(todMils>86400000) todMils-=86400000; //is this a new day? set it back 24 hours
-    if(!justSet && rtcSec==0 && rtcMin==0){ //Trigger NTP update at top of the hour
+    if(!justSet && rtcSec==0 && (wifiConnected && checkNTPSuccess? rtcMin==0: true)){ //Trigger NTP update at top of the hour, or at the top of any minute if wifi is not connected or NTP is not successful TODO change to 5 minutes
       Serial.println(F("Time for an NTP check"));
       startNTP();
     }
@@ -281,7 +296,7 @@ void displayTime(){
   for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin/10)*5+i]); ci--; } ci--; //m tens + 1col gap
   for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin%10)*5+i]); ci--; } ci--; //m ones + 1col gap
   for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec/10)*3+i]); ci--; } ci--; //s tens + 1col gap
-  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec%10)*3+i]+(i==2&&!checkNTPSuccess?1:0)); ci--; } //s ones, plus ntp success light if necessary
+  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, smallnum[(rtcSec%10)*3+i]+(i==0&&!wifiConnected?1:0)+(i==2&&!checkNTPSuccess?1:0)); ci--; } //s ones, plus wifi and ntp fail indicators
   
 }
 
