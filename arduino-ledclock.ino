@@ -6,6 +6,7 @@
 #include <SPI.h>
 #include <WiFiNINA.h>
 #include <WiFiUdp.h>
+#include <Arduino_LSM6DS3.h>
 
 int status = WL_IDLE_STATUS;
 #include "secrets.h" //supply your own
@@ -17,6 +18,8 @@ IPAddress timeServer(129, 6, 15, 28); // time.nist.gov NTP server
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP Udp; // A UDP instance to let us send and receive packets over UDP
+
+WiFiServer server(80);
 
 ////////// FAKE RTC using millis //////////
 unsigned long todMils = 0; //time of day in milliseconds
@@ -40,10 +43,31 @@ RTCZero rtc;
 LedControl lc=LedControl(DIN_PIN,CLK_PIN,CS_PIN,NUM_MAX);
 
 
+///// inputs /////
+// Hardware inputs and value setting
+byte btnCur = 0; //Momentary button currently in use - only one allowed at a time
+byte btnCurHeld = 0; //Button hold thresholds: 0=none, 1=unused, 2=short, 3=long, 4=set by btnStop()
+unsigned long inputLast = 0; //When a button was last pressed
+unsigned long inputLast2 = 0; //Second-to-last of above
+//TODO the math between these two may fail very rarely due to millis() rolling over while setting. Need to find a fix. I think it only applies to the rotary encoder though.
+int inputLastTODMins = 0; //time of day, in minutes past midnight, when button was pressed. Used in paginated functions so they all reflect the same TOD.
+//As the IMU "buttons" don't have pins, these are made-up values.
+const byte mainSel = 1;
+const byte mainAdjUp = 2;
+const byte mainAdjDn = 3;
+const byte altSel = 4;
+
+const word btnShortHold = 1000; //for setting the displayed feataure
+const word btnLongHold = 3000; //for for entering options menu
+
+
+
 void setup() {
   Serial.begin(9600);
+  while(!Serial); //only works on 33 IOT
   rtc.begin();
   for(int i=0; i<NUM_MAX; i++) { lc.shutdown(i,false); lc.setIntensity(i,8); }
+  initInputs();
   startNTP();
 }
 
@@ -51,6 +75,8 @@ void loop() {
   checkSerialInput();
   checkNTP();
   checkRTC(false);
+  if(status==WL_CONNECTED) checkServerClients();
+  checkInputs();
 }
 
 
@@ -69,12 +95,19 @@ void startWiFi(){
     displayTime(); //changes the minute but hides the seconds
     Serial.print(F("Attempting to connect to SSID: ")); Serial.println(ssid);
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
-    WiFi.begin(ssid, pass); //hangs while connecting
-    if(WiFi.status()==WL_CONNECTED){ //did it work?
+    status = WiFi.begin(ssid, pass); //hangs while connecting
+    if(status==WL_CONNECTED){ //did it work?
       Serial.println("Connected!");
       Serial.print("SSID: "); Serial.println(WiFi.SSID());
       Serial.print("IP address: "); Serial.println(WiFi.localIP());
       Serial.print("Signal strength (RSSI):"); Serial.print(WiFi.RSSI()); Serial.println(" dBm");
+      server.begin();
+      IPAddress theip = WiFi.localIP();
+      // displayByte(theip[0]); delay(2000);
+      // displayByte(theip[1]); delay(2000);
+      // displayByte(theip[2]); delay(2000);
+      // displayByte(theip[3]); delay(2000);
+      // displayClear();
     } else { //it didn't work
       Serial.println("Wasn't able to connect. Will try again later.");
     } //end it didn't work
@@ -156,6 +189,60 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
 } //end fn checkNTP
 
 
+////////// WEB SERVER //////////
+void checkServerClients(){
+  WiFiClient client = server.available();
+
+  if (client) {                             // if you get a client,
+    Serial.println("new client");           // print a message out the serial port
+    String currentLine = "";                // make a String to hold incoming data from the client
+    while (client.connected()) {            // loop while the client's connected
+      if (client.available()) {             // if there's bytes to read from the client,
+        char c = client.read();             // read a byte, then
+        Serial.write(c);                    // print it out the serial monitor
+        if (c == '\n') {                    // if the byte is a newline character
+
+          // if the current line is blank, you got two newline characters in a row.
+          // that's the end of the client HTTP request, so send a response:
+          if (currentLine.length() == 0) {
+            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+            // and a content-type so the client knows what's coming, then a blank line:
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-type:text/html");
+            client.println();
+
+            // the content of the HTTP response follows the header:
+            client.print(F("<!DOCTYPE html><html><head><title>Clock Admin</title><style>body { background-color: #222; color: white; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; } a { color: white; }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); $.ajax({ url: $(this).attr('data-action') }); }); });</script></head><body><h2>Clock Admin</h2><p><a href='#' data-action='/b'>Cycle brightness</a></p><p><a href='#' data-action='/f'>Change the font</a></p><p><a href='#' data-action='/s'>Test: toggle sec instead of min display</a></p><p><a href='#' data-action='/m'>Test: toggle sync frequency</a></p><p><a href='#' data-action='/n'>Test: toggle blocking NTP packets</a></p><p><a href='#' data-action='/d'>Print RTC date</a></p></body></html>"));
+            //<p><a href='#' data-action=\"/w\">Test: disconnect WiFi</a></p>
+
+            // The HTTP response ends with another blank line:
+            client.println();
+            // break out of the while loop:
+            break;
+          } else {    // if you got a newline, then clear currentLine:
+            currentLine = "";
+          }
+        } else if (c != '\r') {  // if you got anything else but a carriage return character,
+          currentLine += c;      // add it to the end of the currentLine
+        }
+
+        // Check to see if the client request was
+             if (currentLine.endsWith("GET /w")) doDisconnectWiFi();
+        else if (currentLine.endsWith("GET /m")) doChangeMinuteSync();
+        else if (currentLine.endsWith("GET /n")) doToggleNTPTest();
+        else if (currentLine.endsWith("GET /f")) doChangeFont();
+        else if (currentLine.endsWith("GET /s")) doToggleSecMin();
+        else if (currentLine.endsWith("GET /d")) doPrintRTCDate();
+        else if (currentLine.endsWith("GET /b")) doToggleBrightness();
+      }
+    }
+    // close the connection:
+    client.stop();
+    Serial.println("client disconnected");
+  }
+}
+
+
 ////////// FAKE RTC using millis //////////
 byte rtcSecLast = 61;
 unsigned long millisLast = 0;
@@ -201,6 +288,129 @@ void printRTCTime(){
   if(rtcSec<10) Serial.print(F("0")); Serial.print(rtcSec); Serial.print(F("."));
   if(rtcMil<100) Serial.print(F("0")); if(rtcMil<10) Serial.print(F("0")); Serial.print(rtcMil);
 }
+
+////////// INPUTS ///////////
+void initInputs(){
+  if(!IMU.begin()){ Serial.println("Failed to initialize IMU!"); while(1); }
+  // Serial.print("Accelerometer sample rate = ");
+  // Serial.print(IMU.accelerationSampleRate());
+  // Serial.println(" Hz");
+  // Serial.println();
+  // Serial.println("Acceleration in G's");
+  // Serial.println("X\tY\tZ");
+
+  // vertical: x=1, y=0, z=0
+  // forward: x=0, y=0, z=1
+  /// f a bit  0.8  0   0.7
+  // bakward: x=0. y=0, z=-1
+  // b a bit   0.8  0 -0.5
+  //left:     x=0, y=1, z=0
+  //right:          -1
+  //upside     -1    0    0
+}
+
+//IMU "debouncing"
+const int imuTestCountTrigger = 60; //how many test count needed to change the reported state
+int imuYState = 0; //the state we're reporting (-1, 0, 1)
+int imuYTestState = 0; //the state we've actually last seen
+int imuYTestCount = 0; //how many times we've seen it
+int imuZState = 0; //the state we're reporting (-1, 0, 1)
+int imuZTestState = 0; //the state we've actually last seen
+int imuZTestCount = 0; //how many times we've seen it
+
+void checkInputs(){
+  float x, y, z;
+  IMU.readAcceleration(x,y,z);
+  int imuState;
+  //Assumes Arduino is oriented with components facing back of clock, and USB port facing up
+       if(y<=-0.5) imuState = -1;
+  else if(y>= 0.5) imuState = 1;
+  else if(y>-0.3 && y<0.3) imuState = 0;
+  else imuState = imuYTestState; //if it's not in one of the ranges, treat it as "same"
+  if(imuYTestState!=imuState){ imuYTestState=imuState; imuYTestCount=0; }
+  if(imuYTestCount<imuTestCountTrigger){ imuYTestCount++; /*Serial.print("Y "); Serial.print(imuYTestState); Serial.print(" "); for(char i=0; i<imuYTestCount; i++) Serial.print("#"); Serial.println(imuYTestCount);*/ if(imuYTestCount==imuTestCountTrigger) imuYState=imuYTestState; }
+  
+       if(z<=-0.5) imuState = -1;
+  else if(z>= 0.5) imuState = 1;
+  else if(z>-0.3 && z<0.3) imuState = 0;
+  else imuState = imuZTestState;
+  if(imuZTestState!=imuState){ imuZTestState=imuState; imuZTestCount=0; }
+  if(imuZTestCount<imuTestCountTrigger){ imuZTestCount++; /*Serial.print("Z "); Serial.print(imuZTestState); Serial.print(" "); for(char i=0; i<imuZTestCount; i++) Serial.print("#"); Serial.println(imuZTestCount);*/ if(imuZTestCount==imuTestCountTrigger) imuZState=imuZTestState; }
+  
+  
+  //TODO change this to millis / compare to debouncing code
+  checkBtn(mainSel);
+  checkBtn(mainAdjUp);
+  checkBtn(mainAdjDn);
+  checkBtn(altSel);
+} //end checkInputs
+
+bool readInput(byte btn){
+  switch(btn){
+    //Assumes Arduino is oriented with components facing back of clock, and USB port facing up
+    //!() necessary since the pushbutton-derived code expects false (low) to mean pressed
+    case mainSel:   return !(imuZState < 0); //clock tilted backward
+    case mainAdjDn: return !(imuYState > 0); //clock tilted left
+    case mainAdjUp: return !(imuYState < 0); //clock tilted right
+    case altSel:    return !(imuZState > 0); //clock tilted forward
+    default: break;
+  }
+} //end readInput
+
+void checkBtn(byte btn){
+  //Changes in momentary buttons, LOW = pressed.
+  //When a button event has occurred, will call ctrlEvt
+  bool bnow = readInput(btn);
+  unsigned long now = millis();
+  //If the button has just been pressed, and no other buttons are in use...
+  if(btnCur==0 && bnow==LOW) {
+    btnCur = btn; btnCurHeld = 0; inputLast2 = inputLast; inputLast = now; //inputLastTODMins = tod.hour()*60+tod.minute();
+    ctrlEvt(btn,1); //hey, the button has been pressed
+  }
+  //If the button is being held...
+  if(btnCur==btn && bnow==LOW) {
+    if((unsigned long)(now-inputLast)>=btnLongHold && btnCurHeld < 3) { //account for rollover
+      btnCurHeld = 3;
+      ctrlEvt(btn,3); //hey, the button has been long-held
+    }
+    else if((unsigned long)(now-inputLast)>=btnShortHold && btnCurHeld < 2) {
+      btnCurHeld = 2;
+      ctrlEvt(btn,2); //hey, the button has been short-held
+    }
+  }
+  //If the button has just been released...
+  if(btnCur==btn && bnow==HIGH) {
+    btnCur = 0;
+    if(btnCurHeld < 4) ctrlEvt(btn,0); //hey, the button was released
+    btnCurHeld = 0;
+  }
+}
+void btnStop(){
+  //In some cases, when handling btn evt 1/2/3, we may call this so following events 2/3/0 won't cause unintended behavior (e.g. after a fn change, or going in or out of set)
+  btnCurHeld = 4;
+}
+
+
+
+void ctrlEvt(byte ctrl, byte evt){
+  Serial.print(F("Btn "));
+  switch(ctrl){
+    case mainSel:   Serial.print(F("mainSel ")); break;
+    case mainAdjDn: Serial.print(F("mainAdjDn ")); break;
+    case mainAdjUp: Serial.print(F("mainAdjUp ")); break;
+    case altSel:    Serial.print(F("altSel ")); break;
+    default: break;
+  }
+  switch(evt){
+    case 1: Serial.println(F("pressed")); break;
+    case 2: Serial.println(F("short-held")); break;
+    case 3: Serial.println(F("long-held")); break;
+    case 0: Serial.println(F("released")); Serial.println(); break;
+    default: break;
+  }
+} //end ctrlEvt
+
+
 
 
 ////////// LED DISPLAY //////////
@@ -378,6 +588,16 @@ void displayTime(){
   } //end switch whichFont
 } //end fn displayTime
 
+void displayByte(byte b){
+  int ci = (NUM_MAX*8)-1; //total column index - we will start at the last one and move backward
+  //display index = (NUM_MAX-1)-(ci/8)
+  //display column index = ci%8
+  displayClear();
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<100?0:bignum[(b/100)     *5+i])); ci--; } ci--;
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<10? 0:bignum[((b%100)/10)*5+i])); ci--; } ci--;
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          bignum[(b%10)      *5+i]);  ci--; } ci--;
+} //end fn displayTime
+
 void displayClear(){
   for(int i=0; i<NUM_MAX; i++) { lc.clearDisplay(i); }
 }
@@ -389,61 +609,76 @@ void displayBrightness(int brightness){
 
 
 ////////// SERIAL INPUT for prototype runtime changes //////////
+void doDisconnectWiFi(){ //w
+  Serial.println(F("Disconnecting WiFi - will try to connect at next NTP sync time"));
+  WiFi.disconnect();
+}
+void doChangeMinuteSync(){ //m
+  if(!TESTSyncEveryMinute) {
+    Serial.println(F("Now syncing every minute"));
+    TESTSyncEveryMinute = 1;
+  } else {
+    Serial.println(F("Now syncing every hour (or every minute when wifi/sync is bad)"));
+    TESTSyncEveryMinute = 0;
+  }
+}
+void doToggleNTPTest(){ //n
+  if(!TESTNTPfail) {
+    Serial.println(F("Now preventing incoming NTP packets"));
+    TESTNTPfail = 1;
+  } else {
+    Serial.println(F("Now allowing incoming NTP packets"));
+    TESTNTPfail = 0;
+  }
+}
+void doChangeFont(){ //f
+  Serial.println(F("Changing font"));
+  whichFont++; if(whichFont>3) whichFont=0;
+  displayClear(); displayTime();
+}
+void doToggleSecMin(){ //s
+  if(!TESTSecNotMin) {
+    Serial.println(F("Displaying seconds instead of minutes, for font testing"));
+    TESTSecNotMin = 1;
+  } else {
+    Serial.println(F("Displaying minutes as usual"));
+    TESTSecNotMin = 0;
+  }
+}
+void doPrintRTCDate(){ //d
+  Serial.print(F("rtcDate is ")); Serial.println(rtcDate,DEC);
+}
+void doToggleBrightness(){ //b
+  switch(curBrightness){
+    case 0: curBrightness = 1; break;
+    case 1: curBrightness = 8; break;
+    case 8: curBrightness = 15; break;
+    case 15: curBrightness = 0; break;
+    default: break;
+  }
+  Serial.print(F("Changing brightness to ")); Serial.print(curBrightness,DEC); Serial.println(F("/15"));
+  displayBrightness(curBrightness);
+}
+
 int incomingByte = 0;
 void checkSerialInput(){
   if(Serial.available()>0){
     incomingByte = Serial.read();
     switch(incomingByte){
       case 119: //w
-        Serial.println(F("Disconnecting WiFi - will try to connect at next NTP sync time"));
-        WiFi.disconnect();
-        break;
+        doDisconnectWiFi(); break;
       case 109: //m
-        if(!TESTSyncEveryMinute) {
-          Serial.println(F("Now syncing every minute"));
-          TESTSyncEveryMinute = 1;
-        } else {
-          Serial.println(F("Now syncing every hour (or every minute when wifi/sync is bad)"));
-          TESTSyncEveryMinute = 0;
-        }
-        break;
+        doChangeMinuteSync(); break;
       case 110: //n
-        if(!TESTNTPfail) {
-          Serial.println(F("Now preventing incoming NTP packets"));
-          TESTNTPfail = 1;
-        } else {
-          Serial.println(F("Now allowing incoming NTP packets"));
-          TESTNTPfail = 0;
-        }
-        break;
+        doToggleNTPTest(); break;
       case 102: //f
-        Serial.println(F("Changing font"));
-        whichFont++; if(whichFont>3) whichFont=0;
-        displayClear(); displayTime();
-        break;
+        doChangeFont(); break;
       case 115: //s
-        if(!TESTSecNotMin) {
-          Serial.println(F("Displaying seconds instead of minutes, for font testing"));
-          TESTSecNotMin = 1;
-        } else {
-          Serial.println(F("Displaying minutes as usual"));
-          TESTSecNotMin = 0;
-        }
-        break;
+        doToggleSecMin(); break;
       case 100: //d
-        Serial.print(F("rtcDate is ")); Serial.println(rtcDate,DEC);
-        break;
+        doPrintRTCDate(); break;
       case 98: //b
-        switch(curBrightness){
-          case 0: curBrightness = 1; break;
-          case 1: curBrightness = 8; break;
-          case 8: curBrightness = 15; break;
-          case 15: curBrightness = 0; break;
-          default: break;
-        }
-        Serial.print(F("Changing brightness to ")); Serial.print(curBrightness,DEC); Serial.println(F("/15"));
-        displayBrightness(curBrightness);
-        break;
+        doToggleBrightness(); break;
       case 49: //1
       case 50: //2
       case 51: //3
