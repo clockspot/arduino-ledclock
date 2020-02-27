@@ -46,7 +46,7 @@ LedControl lc=LedControl(DIN_PIN,CLK_PIN,CS_PIN,NUM_MAX);
 ///// inputs /////
 // Hardware inputs and value setting
 byte btnCur = 0; //Momentary button currently in use - only one allowed at a time
-byte btnCurHeld = 0; //Button hold thresholds: 0=none, 1=unused, 2=short, 3=long, 4=set by btnStop()
+byte btnCurHeld = 0; //Button hold thresholds: 0=none, 1=unused, 2=short, 3=long, 4=verylong, 5=superlong, 10=set by btnStop()
 unsigned long inputLast = 0; //When a button was last pressed
 unsigned long inputLast2 = 0; //Second-to-last of above
 //TODO the math between these two may fail very rarely due to millis() rolling over while setting. Need to find a fix. I think it only applies to the rotary encoder though.
@@ -59,14 +59,19 @@ const byte altSel = 4;
 
 const word btnShortHold = 1000; //for setting the displayed feataure
 const word btnLongHold = 3000; //for for entering options menu
+const word btnVeryLongHold = 5000; //for wifi IP info / AP start / admin start
+const word btnSuperLongHold = 15000; //for wifi forget
 
+unsigned long adminInputLast = 0; //for noticing when the admin page hasn't been interacted with in 2 minutes, so we can time it out
+
+int curBrightness = 7;
 
 
 void setup() {
   Serial.begin(9600);
   while(!Serial); //only works on 33 IOT
   rtc.begin();
-  for(int i=0; i<NUM_MAX; i++) { lc.shutdown(i,false); lc.setIntensity(i,8); }
+  for(int i=0; i<NUM_MAX; i++) { lc.shutdown(i,false); lc.setIntensity(i,curBrightness); }
   initInputs();
   startNTP();
 }
@@ -101,8 +106,8 @@ void startWiFi(){
       Serial.print("SSID: "); Serial.println(WiFi.SSID());
       Serial.print("IP address: "); Serial.println(WiFi.localIP());
       Serial.print("Signal strength (RSSI):"); Serial.print(WiFi.RSSI()); Serial.println(" dBm");
-      server.begin();
-      IPAddress theip = WiFi.localIP();
+      server.begin(); //there's no way to stop it I think, so might as well keep it going TODO what about across wifi breakages
+      // IPAddress theip = WiFi.localIP();
       // displayByte(theip[0]); delay(2000);
       // displayByte(theip[1]); delay(2000);
       // displayByte(theip[2]); delay(2000);
@@ -191,10 +196,17 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
 
 ////////// WEB SERVER //////////
 void checkServerClients(){
+  if(status!=WL_CONNECTED) return;
   WiFiClient client = server.available();
 
   if (client) {                             // if you get a client,
-    Serial.println("new client");           // print a message out the serial port
+    
+    if(adminInputLast==0 || millis()-adminInputLast>120000) { client.stop(); Serial.print(F("Got a client but ditched it because adminInputLast=")); Serial.print(adminInputLast); Serial.print(F(" and millis()-aIL=")); Serial.println(millis()-adminInputLast); adminInputLast=0; return; } //TODO use a different flag from adminInputLast
+    
+    adminInputLast = millis();
+    
+    //Serial.println("new client");           // print a message out the serial port
+    Serial.print(F("Got a client and keeping it because adminInputLast=")); Serial.print(adminInputLast); Serial.print(F(" and millis()-aIL=")); Serial.println(millis()-adminInputLast);
     String currentLine = "";                // make a String to hold incoming data from the client
     while (client.connected()) {            // loop while the client's connected
       if (client.available()) {             // if there's bytes to read from the client,
@@ -212,7 +224,7 @@ void checkServerClients(){
             client.println();
 
             // the content of the HTTP response follows the header:
-            client.print(F("<!DOCTYPE html><html><head><title>Clock Admin</title><style>body { background-color: #222; color: white; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; } a { color: white; }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); $.ajax({ url: $(this).attr('data-action') }); }); });</script></head><body><h2>Clock Admin</h2><p><a href='#' data-action='/b'>Cycle brightness</a></p><p><a href='#' data-action='/f'>Change the font</a></p><p><a href='#' data-action='/s'>Test: toggle sec instead of min display</a></p><p><a href='#' data-action='/m'>Test: toggle sync frequency</a></p><p><a href='#' data-action='/n'>Test: toggle blocking NTP packets</a></p><p><a href='#' data-action='/d'>Print RTC date</a></p></body></html>"));
+            client.print(F("<!DOCTYPE html><html><head><title>Clock Admin</title><style>body { background-color: #222; color: white; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; } a { color: white; }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); $.ajax({ url: $(this).attr('data-action') }).fail(function(){ $('body').html('<p>Admin page has timed out. Please hold Select for 5 seconds to reactivate it.</p>'); }); }); });</script></head><body><h2>Clock Admin</h2><p><a href='#' data-action='/b'>Cycle brightness</a></p><p><a href='#' data-action='/s'>Test: toggle sec instead of min display</a></p><p><a href='#' data-action='/m'>Test: toggle sync frequency</a></p><p><a href='#' data-action='/n'>Test: toggle blocking NTP packets</a></p><p><a href='#' data-action='/d'>Print RTC date</a></p></body></html>"));
             //<p><a href='#' data-action=\"/w\">Test: disconnect WiFi</a></p>
 
             // The HTTP response ends with another blank line:
@@ -230,7 +242,6 @@ void checkServerClients(){
              if (currentLine.endsWith("GET /w")) doDisconnectWiFi();
         else if (currentLine.endsWith("GET /m")) doChangeMinuteSync();
         else if (currentLine.endsWith("GET /n")) doToggleNTPTest();
-        else if (currentLine.endsWith("GET /f")) doChangeFont();
         else if (currentLine.endsWith("GET /s")) doToggleSecMin();
         else if (currentLine.endsWith("GET /d")) doPrintRTCDate();
         else if (currentLine.endsWith("GET /b")) doToggleBrightness();
@@ -369,7 +380,15 @@ void checkBtn(byte btn){
   }
   //If the button is being held...
   if(btnCur==btn && bnow==LOW) {
-    if((unsigned long)(now-inputLast)>=btnLongHold && btnCurHeld < 3) { //account for rollover
+    if((unsigned long)(now-inputLast)>=btnSuperLongHold && btnCurHeld < 5) { //account for rollover
+      btnCurHeld = 5;
+      ctrlEvt(btn,5); //hey, the button has been long-held
+    }
+    else if((unsigned long)(now-inputLast)>=btnVeryLongHold && btnCurHeld < 4) { //account for rollover
+      btnCurHeld = 4;
+      ctrlEvt(btn,4); //hey, the button has been long-held
+    }
+    else if((unsigned long)(now-inputLast)>=btnLongHold && btnCurHeld < 3) { //account for rollover
       btnCurHeld = 3;
       ctrlEvt(btn,3); //hey, the button has been long-held
     }
@@ -381,13 +400,13 @@ void checkBtn(byte btn){
   //If the button has just been released...
   if(btnCur==btn && bnow==HIGH) {
     btnCur = 0;
-    if(btnCurHeld < 4) ctrlEvt(btn,0); //hey, the button was released
+    if(btnCurHeld < 10) ctrlEvt(btn,0); //hey, the button was released //4 to 10
     btnCurHeld = 0;
   }
 }
 void btnStop(){
-  //In some cases, when handling btn evt 1/2/3, we may call this so following events 2/3/0 won't cause unintended behavior (e.g. after a fn change, or going in or out of set)
-  btnCurHeld = 4;
+  //In some cases, when handling btn evt 1/2/3, we may call this so following events 2/3/0 won't cause unintended behavior (e.g. after a fn change, or going in or out of set) //4 to 10
+  btnCurHeld = 10;
 }
 
 
@@ -408,6 +427,15 @@ void ctrlEvt(byte ctrl, byte evt){
     case 0: Serial.println(F("released")); Serial.println(); break;
     default: break;
   }
+  if(ctrl==mainSel && evt==4){ //very long hold: "start" server and show IP
+    adminInputLast = millis();
+    IPAddress theip = WiFi.localIP();
+    displayByte(theip[0]); delay(2500);
+    displayByte(theip[1]); delay(2500);
+    displayByte(theip[2]); delay(2500);
+    displayByte(theip[3]); delay(2500);
+    displayClear();
+  }
 } //end ctrlEvt
 
 
@@ -416,6 +444,7 @@ void ctrlEvt(byte ctrl, byte evt){
 ////////// LED DISPLAY //////////
 
 //See commit fb1419c for binary counter display test
+//See commit 67bc64f for more font options
 
 byte smallnum[30]={ //5px high, squared off, but for rounded
   B11111000, B10001000, B11111000, // 0
@@ -429,43 +458,6 @@ byte smallnum[30]={ //5px high, squared off, but for rounded
   B11111000, B10101000, B11111000, // 8
   B10111000, B10101000, B11111000  // 9
 };
-byte smallnum2[30]={ //5px high, squared off, no serif on 1 and add serif to 6
-  B11111000, B10001000, B11111000, // 0
-  B00000000, B11111000, B00000000, // 1 no serif
-  B11101000, B10101000, B10111000, // 2
-  B10001000, B10101000, B11111000, // 3
-  B01110000, B01000000, B11111000, // 4
-  B10111000, B10101000, B11101000, // 5
-  B11111000, B10101000, B11100000, // 6 mini serif
-  B00001000, B00001000, B11111000, // 7
-  B11111000, B10101000, B11111000, // 8
-  B00111000, B10101000, B11111000  // 9 mini serif
-};
-byte smallnum3[30]={ //6px high, squared off
-  B11111100, B10000100, B11111100, // 0
-  B00000000, B11111100, B00000000, // 1 no serif
-  B11100100, B10100100, B10111100, // 2
-  B10000100, B10010100, B11111100, // 3
-  B00111000, B00100000, B11111100, // 4
-  B10011100, B10010100, B11110100, // 5
-  B11111100, B10010100, B11110000, // 6 bit of a serif
-  B00000100, B00000100, B11111100, // 7
-  B11111100, B10010100, B11111100, // 8
-  B00111100, B10100100, B11111100  // 9 bit of a serif
-};
-// byte smallnum4[30]={ //5px high, rounded - terrible
-//   B01110000, B10001000, B01110000, // 0
-//   B00010000, B11111000, B00000000, // 1
-//   B11001000, B10101000, B10010000, // 2
-//   B10001000, B10101000, B01011000, // 3
-//   B01100000, B01010000, B11111000, // 4
-//   B10111000, B10101000, B01001000, // 5
-//   B01110000, B10101000, B01000000, // 6
-//   B00001000, B11101000, B00011000, // 7
-//   B01010000, B10101000, B01010000, // 8
-//   B00010000, B10101000, B01110000  // 9
-// };
-
 byte bignum[50]={ //chicagolike 5x8
   B01111110, B11111111, B10000001, B11111111, B01111110, // 0
   B00000000, B00000100, B11111110, B11111111, B00000000, // 1
@@ -474,60 +466,13 @@ byte bignum[50]={ //chicagolike 5x8
   B00111000, B00100100, B11111110, B11111111, B00100000, // 4
   B01001111, B10001111, B10001001, B11111001, B01110001, // 5
   B01111110, B11111111, B10001001, B11111001, B01110000, // 6 more squared tail
+//B01111100, B11111110, B10001011, B11111001, B01110000, // 6 original
   B00000001, B11110001, B11111001, B00001111, B00000111, // 7
   B01110110, B11111111, B10001001, B11111111, B01110110, // 8
   B00001110, B10011111, B10010001, B11111111, B01111110  // 9 more squared tail
-};
-// byte bignum[50]={ //chicagolike 5x8
-//   B01111110, B11111111, B10000001, B11111111, B01111110, // 0
-//   B00000000, B00000100, B11111110, B11111111, B00000000, // 1
-//   B11000010, B11100001, B10110001, B10011111, B10001110, // 2
-//   B01001001, B10001101, B10001111, B11111011, B01110001, // 3
-//   B00111000, B00100100, B11111110, B11111111, B00100000, // 4
-//   B01001111, B10001111, B10001001, B11111001, B01110001, // 5
-//   B01111100, B11111110, B10001011, B11111001, B01110000, // 6
-//   B00000001, B11110001, B11111001, B00001111, B00000111, // 7
-//   B01110110, B11111111, B10001001, B11111111, B01110110, // 8
-//   B00001110, B10011111, B11010001, B01111111, B00111110  // 9
-// };
-byte bignum2[50]={ //square 5x8 bold on right
-  B11111111, B10000001, B10000001, B11111111, B11111111, // 0
-  B00000000, B00000000, B11111111, B11111111, B00000000, // 1
-  B11110001, B10010001, B10010001, B10011111, B10011111, // 2
-  B10000001, B10001001, B10001001, B11111111, B11111111, // 3
-  B00011110, B00010000, B00010000, B11111111, B11111111, // 4
-  B10001111, B10001001, B10001001, B11111001, B11111001, // 5
-  B11111111, B10001001, B10001001, B11111001, B11111000, // 6
-  B00000001, B00000001, B00000001, B11111111, B11111111, // 7
-  B11111111, B10001001, B10001001, B11111111, B11111111, // 8
-  B00011111, B10010001, B10010001, B11111111, B11111111  // 9
-};
-byte bignum3[40]={ //square 4x8 bold on right
-  B11111111, B10000001, B11111111, B11111111, // 0
-  B00000000, B11111111, B11111111, B00000000, // 1
-  B11110001, B10010001, B10011111, B10011111, // 2
-  B10000001, B10001001, B11111111, B11111111, // 3
-  B00011110, B00010000, B11111111, B11111111, // 4
-  B10001111, B10001001, B11111001, B11111001, // 5
-  B11111111, B10001001, B11111001, B11111000, // 6
-  B00000001, B00000001, B11111111, B11111111, // 7
-  B11111111, B10001001, B11111111, B11111111, // 8
-  B00011111, B10010001, B11111111, B11111111  // 9
-};
-byte bignum4[30]={ //square 3x8
-  B11111111, B10000001, B11111111, // 0
-  B00000000, B11111111, B00000000, // 1
-  B11110001, B10010001, B10011111, // 2
-  B10000001, B10001001, B11111111, // 3
-  B00011110, B00010000, B11111111, // 4
-  B10001111, B10001001, B11111001, // 5
-  B11111111, B10001001, B11111000, // 6
-  B00000001, B00000001, B11111111, // 7
-  B11111111, B10001001, B11111111, // 8
-  B00011111, B10010001, B11111111, // 9
+//B00001110, B10011111, B11010001, B01111111, B00111110  // 9 original
 };
 
-char whichFont = 0;
 bool TESTSecNotMin = 0; //display seconds instead of minutes
 void displayTime(){
   unsigned long todSecs = todMils/1000; if(todSecs>=86400) todSecs=0;
@@ -537,55 +482,17 @@ void displayTime(){
   int ci = (NUM_MAX*8)-1; //total column index - we will start at the last one and move backward
   //display index = (NUM_MAX-1)-(ci/8)
   //display column index = ci%8
-  switch(whichFont){
-    case 0: default: //big numbers are 5 pixels wide
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcHrs<10?0:bignum[(rtcHrs/10)*5+i])); ci--; } ci--; //h tens + 1col gap (leading blank instead of zero)
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcHrs%10)*5+i]); ci--; } ci--; ci--; //h ones + 2col gap
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin/10)*5+i]); ci--; } ci--; //m tens + 1col gap
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin%10)*5+i]); ci--; } ci--; //m ones + 1col gap
-      break;
-    case 1: //big numbers are 5 pixels wide
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcHrs<10?0:bignum2[(rtcHrs/10)*5+i])); ci--; } ci--; //h tens + 1col gap (leading blank instead of zero)
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum2[(rtcHrs%10)*5+i]); ci--; } ci--; ci--; //h ones + 2col gap
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum2[(rtcMin/10)*5+i]); ci--; } ci--; //m tens + 1col gap
-      for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum2[(rtcMin%10)*5+i]); ci--; } ci--; //m ones + 1col gap
-      break;
-    case 2: //big numbers are 4 pixels wide
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; }
-      for(int i=0; i<4; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcHrs<10?0:bignum3[(rtcHrs/10)*4+i])); ci--; } ci--; //h tens + 1col gap (leading blank instead of zero)
-      for(int i=0; i<4; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum3[(rtcHrs%10)*4+i]); ci--; } ci--; ci--; //h ones + 2col gap
-      for(int i=0; i<4; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum3[(rtcMin/10)*4+i]); ci--; } ci--; //m tens + 1col gap
-      for(int i=0; i<4; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum3[(rtcMin%10)*4+i]); ci--; } ci--; ci--; //m ones + 1col gap
-      break;
-    case 3: //big numbers are 3 pixels wide
-      //for(int i=0; i<8; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //blank first display - could put date here
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcDate<10?0:smallnum3[(rtcDate/10)*3+i])); ci--; } ci--; //date tens + 1col gap (leading blank instead of zero)
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcDate==0?0:smallnum3[(rtcDate%10)*3+i])); ci--; } ci--; //date ones + 1col gap (blank if date is completely zeroed out)
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcHrs<10?0:bignum4[(rtcHrs/10)*3+i])); ci--; } ci--; //h tens + 1col gap (leading blank instead of zero)
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum4[(rtcHrs%10)*3+i]); ci--; } ci--; ci--; //h ones + 2col gap
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum4[(rtcMin/10)*3+i]); ci--; } ci--; //m tens + 1col gap
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum4[(rtcMin%10)*3+i]); ci--; } ci--; //m ones + 1col gap
-      break;
-  } //end switch whichFont
-  switch(whichFont){
-    //small numbers are all 3 pixels wide
-    case 0: default:
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum[(rtcSec/10)*3+i]:0)); ci--; } ci--; //s tens (unless wifi is connecting, then blank) + 1col gap
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum[(rtcSec%10)*3+i]:0)+(i==0&&WiFi.status()!=WL_CONNECTED?1:0)+(i==2&&!ntpOK?1:0)); ci--; } //s ones (unless wifi is connecting, then blank), plus wifi and ntp fail indicators
-      break;
-    case 1:
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum2[(rtcSec/10)*3+i]:0)); ci--; } ci--; //s tens (unless wifi is connecting, then blank) + 1col gap
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum2[(rtcSec%10)*3+i]:0)+(i==0&&WiFi.status()!=WL_CONNECTED?1:0)+(i==2&&!ntpOK?1:0)); ci--; } //s ones (unless wifi is connecting, then blank), plus wifi and ntp fail indicators
-      break;
-    case 2:
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum3[(rtcSec/10)*3+i]:0)); ci--; } ci--; //s tens (unless wifi is connecting, then blank) + 1col gap
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum3[(rtcSec%10)*3+i]:0)+(i==0&&WiFi.status()!=WL_CONNECTED?1:0)+(i==2&&!ntpOK?1:0)); ci--; } //s ones (unless wifi is connecting, then blank), plus wifi and ntp fail indicators
-      break;
-    case 3:
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum3[(rtcSec/10)*3+i]:0)); ci--; } ci--; //s tens (unless wifi is connecting, then blank) + 1col gap
-      for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum3[(rtcSec%10)*3+i]:0)+(i==0&&WiFi.status()!=WL_CONNECTED?1:0)+(i==2&&!ntpOK?1:0)); ci--; } //s ones (unless wifi is connecting, then blank), plus wifi and ntp fail indicators
-      break;
-  } //end switch whichFont
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (rtcHrs<10?0:bignum[(rtcHrs/10)*5+i])); ci--; } //h tens (leading blank)
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcHrs%10)*5+i]); ci--; } //h ones
+  for(int i=0; i<2; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //2col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin/10)*5+i]); ci--; } //m tens + 1col gap
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, bignum[(rtcMin%10)*5+i]); ci--; } //m ones + 1col gap
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
+  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum[(rtcSec/10)*3+i]:0)); ci--; } //s tens (unless wifi is connecting, then blank) + 1col gap
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
+  for(int i=0; i<3; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (!wifiConnecting?smallnum[(rtcSec%10)*3+i]:0)+(i==0&&WiFi.status()!=WL_CONNECTED?1:0)+(i==2&&!ntpOK?1:0)); ci--; } //s ones (unless wifi is connecting, then blank), plus wifi and ntp fail indicators
 } //end fn displayTime
 
 void displayByte(byte b){
@@ -593,16 +500,17 @@ void displayByte(byte b){
   //display index = (NUM_MAX-1)-(ci/8)
   //display column index = ci%8
   displayClear();
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<100?0:bignum[(b/100)     *5+i])); ci--; } ci--;
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<10? 0:bignum[((b%100)/10)*5+i])); ci--; } ci--;
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          bignum[(b%10)      *5+i]);  ci--; } ci--;
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<100?0:bignum[(b/100)     *5+i])); ci--; }
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<10? 0:bignum[((b%100)/10)*5+i])); ci--; }
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          bignum[(b%10)      *5+i]);  ci--; }
 } //end fn displayTime
 
 void displayClear(){
   for(int i=0; i<NUM_MAX; i++) { lc.clearDisplay(i); }
 }
 
-int curBrightness = 8;
 void displayBrightness(int brightness){
   for(int i=0; i<NUM_MAX; i++) { lc.setIntensity(i,brightness); }
 }
@@ -631,11 +539,6 @@ void doToggleNTPTest(){ //n
     TESTNTPfail = 0;
   }
 }
-void doChangeFont(){ //f
-  Serial.println(F("Changing font"));
-  whichFont++; if(whichFont>3) whichFont=0;
-  displayClear(); displayTime();
-}
 void doToggleSecMin(){ //s
   if(!TESTSecNotMin) {
     Serial.println(F("Displaying seconds instead of minutes, for font testing"));
@@ -651,8 +554,8 @@ void doPrintRTCDate(){ //d
 void doToggleBrightness(){ //b
   switch(curBrightness){
     case 0: curBrightness = 1; break;
-    case 1: curBrightness = 8; break;
-    case 8: curBrightness = 15; break;
+    case 1: curBrightness = 7; break;
+    case 7: curBrightness = 15; break;
     case 15: curBrightness = 0; break;
     default: break;
   }
@@ -671,8 +574,6 @@ void checkSerialInput(){
         doChangeMinuteSync(); break;
       case 110: //n
         doToggleNTPTest(); break;
-      case 102: //f
-        doChangeFont(); break;
       case 115: //s
         doToggleSecMin(); break;
       case 100: //d
@@ -692,6 +593,7 @@ void checkSerialInput(){
       case 97: //a
       case 99: //c
       case 101: //e
+      case 102: //f
       case 103: //g
       case 104: //h
       case 105: //i
