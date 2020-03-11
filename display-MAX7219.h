@@ -1,7 +1,7 @@
-#ifndef DISPLAY_MAX7219_HEADER
-#define DISPLAY_MAX7219_HEADER
+//display-MAX7219.h
 
-#include "Arduino.h"
+#ifndef DISPLAY_MAX7219_H
+#define DISPLAY_MAX7219_H
 
 void displaySetup();
 void displayLoop();

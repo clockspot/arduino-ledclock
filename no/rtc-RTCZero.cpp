@@ -6,9 +6,10 @@ void rtcSetup(){
   rtc.begin();
 }
 void rtcLoop(){
-  checkRTC(false);
+  //checkRTC(false);
+  //TODO
 }
-rtcDisplayTime(showSeconds){
+void rtcDisplayTime(bool showSeconds){
   //displayTime(todMils,showSeconds);
   //TODO
 }

@@ -1,8 +1,10 @@
+//display-MAX7219.cpp
 //based on Eberhard Farle's LedControl library - http://wayoda.github.io/LedControl
 
 #include "Arduino.h"
-#include "display-MAX7219.h"
 #include <LedControl.h>
+#include "config.h" //includes consts used here
+#include "display-MAX7219.h" //definitions for your own functions - needed only if calling functions before they're defined
 
 #define NUM_MAX 4
 #define ROTATE 90
@@ -98,6 +100,3 @@ void displayToggleBrightness(){
   Serial.print(F("Changing brightness to ")); Serial.print(curBrightness,DEC); Serial.println(F("/15"));
   for(int i=0; i<NUM_MAX; i++) { lc.setIntensity(i,curBrightness); }
 }
-
-
-#endif //end of once-only header
