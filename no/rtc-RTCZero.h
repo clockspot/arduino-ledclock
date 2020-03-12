@@ -7,6 +7,6 @@ void rtcSetup();
 void rtcLoop();
 void checkRTC(bool justSet);
 void rtcDisplayTime(bool showSeconds);
-void rtcChangeMinuteSync();
+char rtcChangeMinuteSync();
 
 #endif

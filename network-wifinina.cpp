@@ -17,13 +17,16 @@ To change or forget the WiFi network the clock is connected to, use the admin pa
 #include <WiFiNINA.h>
 #include <WiFiUdp.h>
 #include "config.h" //constants
+//#include "arduino-ledclock.h" //has the version
 #include "network-wifinina.h" //definitions for your own functions - needed only if calling functions before they're defined
 #include DISPLAY_H //definitions for the display (as defined in config)
 #include RTC_H //definitions for the RTC for calling the display
 
-#include "secrets.h" //supply your own
-char ssid[] = SECRET_SSID; // your network SSID (name)
-char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
+//#include "secrets.h" //supply your own
+String ssid = "Riley";
+String pass = "5802301644";
+//char ssid[] = SECRET_SSID; // your network SSID (name)
+//char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
 int keyIndex = 0; // your network key Index number (needed only for WEP)
 
 unsigned int localPort = 2390; // local port to listen for UDP packets
@@ -65,7 +68,7 @@ void networkStartWiFi(){
   checkForWiFiStatusChange(); //just for serial logging
   rtcDisplayTime(false); //display time without seconds
   Serial.println(); Serial.print(millis()); Serial.print(F(" Attempting to connect to SSID: ")); Serial.println(ssid);
-  WiFi.begin(ssid, pass); //hangs while connecting
+  WiFi.begin(ssid.c_str(), pass.c_str()); //hangs while connecting
   if(WiFi.status()==WL_CONNECTED){ //did it work?
     Serial.print(millis()); Serial.println(" Connected!");
     Serial.print("SSID: "); Serial.println(WiFi.SSID());
@@ -188,13 +191,26 @@ void checkClients(){
     
     adminInputLast = millis();
     
-    //Serial.println("new client");           // print a message out the serial port
-    String currentLine = "";                // make a String to hold incoming data from the client
-    while (client.connected()) {            // loop while the client's connected
-      if (client.available()) {             // if there's bytes to read from the client,
-        char c = client.read();             // read a byte, then
-        //Serial.write(c);                    // print it out the serial monitor
+    String result = "";
+    
+    String currentLine = ""; //we'll read the data from the client one line at a time
+    while (client.connected()) { // loop while the client's connected
+      if (client.available()) { // if there's bytes to read from the client,
+        char c = client.read();
+
+
         if (c == '\n') {                    // if the byte is a newline character
+        
+        
+        // if(c != '\n'){ //If the byte is not a newline character
+        //   if(c != '\r') currentLine += c; //add the character to currentLine (except carriage returns)
+        // } else { //end of the line: do something with it
+
+          // //Inspect the end of the line to see if it was a command
+          //      if (currentLine.endsWith("GET /m"))  result = (rtcChangeMinuteSync()? F("Now syncing every minute."): F("Now syncing every hour at minute 59.")); //TESTSyncEveryMinute
+          // else if (currentLine.endsWith("GET /n"))  result = (networkToggleNTPTest()? F("Now preventing incoming NTP packets."): F("Now allowing incoming NTP packets."));
+          // else if (currentLine.endsWith("GET /b")){ result = F("Display brightness set to "); result+=displayToggleBrightness(); result+=F("."); }
+
 
           // if the current line is blank, you got two newline characters in a row.
           // that's the end of the client HTTP request, so send a response:
@@ -204,30 +220,47 @@ void checkClients(){
             client.println("HTTP/1.1 200 OK");
             client.println("Content-type:text/html");
             client.println();
-
-            // the content of the HTTP response follows the header:
-            client.print(F("<!DOCTYPE html><html><head><title>Clock Admin</title><style>body { background-color: #222; color: white; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; } a { color: white; }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); $.ajax({ url: $(this).attr('data-action') }).fail(function(){ $('body').html('<p>Admin page has timed out. Please hold Select for 5 seconds to reactivate it, then <a href=\"./\">refresh</a>.</p>'); }); }); });</script></head><body><h2>Clock Admin</h2><p>"));
-            client.print(strSyncState());
-            client.print(F("</p><p><a href='#' data-action='/b'>Cycle brightness</a></p><p><a href='#' data-action='/s'>Test: toggle sec instead of min display</a></p><p><a href='#' data-action='/m'>Test: toggle sync frequency</a></p><p><a href='#' data-action='/n'>Test: toggle blocking NTP packets</a></p><p><a href='#' data-action='/d'>Print RTC date</a></p></body></html>"));
-            //<p><a href='#' data-action=\"/w\">Test: disconnect WiFi</a></p>
+            
+            if(result!="") client.print(result); //If this is in response to a specific action request, just send the client the result message
+            
+            else { //otherwise, render the entire page
+              // the content of the HTTP response follows the header:
+              client.print(F("<!DOCTYPE html><html><head><title>Clock Settings</title><style>body { background-color: #eee; color: #222; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; position: absolute; } a { color: #33a; } ul { padding-left: 9em; text-indent: -9em; list-style: none; } ul li { margin-bottom: 1.2em; } ul li label { display: inline-block; width: 8em; text-align: right; padding-right: 1em; text-indent: 0; font-weight: bold; } ul li.nolabel { margin-left: 9em; } #result { display: none; position: fixed; left: 0; top: 0; width: 100%; padding: 1.5em; box-sizing: border-box; text-align: center; background-color: #8c8; color: #020; } @media only screen and (max-width: 550px) { ul { padding-left: 0; text-indent: 0; } ul li label { display: block; width: auto; text-align: left; padding: 0; } ul li.nolabel { margin-left: 0; }} @media (prefers-color-scheme: dark) { body { background-color: #222; color: #ddd; } a { color: white; } #result { background-color: #373; color: white; }}</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); timer = setTimeout(timedOut,120000); $.ajax({ url: $(this).attr('data-action') }).done(function(d){$('#result').html(d).stop().slideDown(300); hideResultTimer = setTimeout(hideResult,2000);}).fail(timedOut); }); function timedOut(){ $('body').html('<p>Clock settings page has timed out. Please hold Select for 5 seconds to reactivate it, then <a href=\"./\">refresh</a>.</p>'); } function hideResult(){$('#result').slideUp(300);} let timer = setTimeout(timedOut,120000); let hideResultTimer; });</script></head><body><div id='result'></div><h2 style='margin-top: 0;'>Clock Settings</h2><ul>"));
+            
+              client.print(F("<li><label>Last sync</label>As of page load time: ")); client.print(getLastSync()); client.print(F("</li>"));
+            
+              client.print(F("<li><label>Sync frequency</label><a href='#' data-action='/m'>Toggle sync frequency</a></li>"));
+              client.print(F("<li><label>Sync block</label><a href='#' data-action='/n'>Toggle blocking NTP packets</a></li>"));
+              client.print(F("<li><label>Brightness</label><a href='#' data-action='/b'>Cycle brightness</a></li>"));
+              client.print(F("<li><label>Version</label>"));
+              //client.print(getSoftwareVersion());
+              client.print(F("</li>"));
+              client.print(F("</ul></body></html>"));
+            }
 
             // The HTTP response ends with another blank line:
             client.println();
             // break out of the while loop:
-            break;
-          } else {    // if you got a newline, then clear currentLine:
+            break; //breaks the while loop
+          } else { // if you got a newline, then clear currentLine to read the next line
             currentLine = "";
           }
+        //} //end end of the line
         } else if (c != '\r') {  // if you got anything else but a carriage return character,
           currentLine += c;      // add it to the end of the currentLine
         }
 
-        // Check to see if the client request was
-             if (currentLine.endsWith("GET /m")) rtcChangeMinuteSync();
-        else if (currentLine.endsWith("GET /n")) networkToggleNTPTest();
-        else if (currentLine.endsWith("GET /b")) displayToggleBrightness();
-      }
-    }
+        // // Check to see if the client request was
+        //      if (currentLine.endsWith("GET /m")) rtcChangeMinuteSync();
+        // else if (currentLine.endsWith("GET /n")) networkToggleNTPTest();
+        // else if (currentLine.endsWith("GET /b")) displayToggleBrightness();
+        //Inspect the end of the line to see if it was a command
+             if (currentLine.endsWith("GET /m"))  result = (rtcChangeMinuteSync()? F("Now syncing every minute."): F("Now syncing every hour at minute 59.")); //TESTSyncEveryMinute
+        else if (currentLine.endsWith("GET /n"))  result = (networkToggleNTPTest()? F("Now preventing incoming NTP packets."): F("Now allowing incoming NTP packets."));
+        else if (currentLine.endsWith("GET /b")){ result = F("Display brightness set to "); result+=displayToggleBrightness(); result+=F("."); }
+        
+      } //end if client available
+    } //end while client connected
     // close the connection:
     client.stop();
     Serial.println("client disconnected");
@@ -237,7 +270,7 @@ void checkClients(){
 
 
 
-void networkToggleNTPTest(){ //n
+int networkToggleNTPTest(){ //n
   if(!TESTNTPfail) {
     Serial.println(F("Now preventing incoming NTP packets"));
     TESTNTPfail = 1;
@@ -245,6 +278,7 @@ void networkToggleNTPTest(){ //n
     Serial.println(F("Now allowing incoming NTP packets"));
     TESTNTPfail = 0;
   }
+  return TESTNTPfail;
 }
 
 

@@ -89,7 +89,7 @@ void displayByte(byte b){
   for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          bignum[(b%10)      *5+i]);  ci--; }
 } //end fn displayByte
 
-void displayToggleBrightness(){
+int displayToggleBrightness(){
   switch(curBrightness){
     case 0: curBrightness = 1; break;
     case 1: curBrightness = 7; break;
@@ -99,4 +99,5 @@ void displayToggleBrightness(){
   }
   Serial.print(F("Changing brightness to ")); Serial.print(curBrightness,DEC); Serial.println(F("/15"));
   for(int i=0; i<NUM_MAX; i++) { lc.setIntensity(i,curBrightness); }
+  return curBrightness;
 }

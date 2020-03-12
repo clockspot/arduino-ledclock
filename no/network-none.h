@@ -14,7 +14,7 @@ bool networkNTPOK(){}
 void networkStartAdmin(){}
 void networkStopAdmin(){}
 void checkClients(){}
-void networkToggleNTPTest(){}
+int networkToggleNTPTest(){}
 void checkForWiFiStatusChange(){}
 
 #endif

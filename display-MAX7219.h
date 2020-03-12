@@ -8,6 +8,6 @@ void displayLoop();
 void displayTime(unsigned long mils, bool showSeconds);
 void displayClear();
 void displayByte(byte b);
-void displayToggleBrightness();
+int displayToggleBrightness();
 
 #endif

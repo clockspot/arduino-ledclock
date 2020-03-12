@@ -7,10 +7,10 @@ void rtcSetup();
 void rtcLoop();
 void checkRTC(bool justSet);
 void rtcDisplayTime(bool showSeconds);
-void rtcChangeMinuteSync();
+char rtcChangeMinuteSync();
 void rtcSetTime(unsigned long newtodMils, unsigned int uncertainty);
 String strMilsToHms(unsigned long t);
-String strSyncState();
+String getLastSync();
 String strDiffLength(unsigned long diff);
 
 #endif

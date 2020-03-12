@@ -57,7 +57,7 @@ void rtcDisplayTime(bool showSeconds){
   displayTime(todMils,showSeconds);
 }
 
-void rtcChangeMinuteSync(){ //m
+char rtcChangeMinuteSync(){ //m
   if(!TESTSyncEveryMinute) {
     Serial.println(F("Now syncing every minute"));
     TESTSyncEveryMinute = 1;
@@ -65,6 +65,7 @@ void rtcChangeMinuteSync(){ //m
     Serial.println(F("Now syncing every hour (or every minute when wifi/sync is bad)"));
     TESTSyncEveryMinute = 0;
   }
+  return TESTSyncEveryMinute;
 }
 
 //mosstrMilsToHmsync
@@ -89,7 +90,8 @@ void rtcSetTime(unsigned long newtodMils, unsigned int uncertainty){
   
   todMils = newtodMils;
   
-  Serial.println(strSyncState());
+  Serial.print(F("RTC set to "));
+  Serial.println(getLastSync());
 }
 
 String strMilsToHms(unsigned long t){
@@ -106,9 +108,9 @@ String strMilsToHms(unsigned long t){
   return out;
 }
 
-String strSyncState(){
-  if(!lastSyncMillis) return "No NTP sync yet";
-  String out = "Last NTP sync at ";
+String getLastSync(){
+  if(!lastSyncMillis) return "None";
+  String out = "";
   out=out+strMilsToHms(lastSyncTodMils);
   if(prevSyncMillis){
     out=out+F(" ("); out=out+strDiffLength(millis()-lastSyncMillis); out=out+F(" ago)");
