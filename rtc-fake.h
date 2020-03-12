@@ -8,8 +8,9 @@ void rtcLoop();
 void checkRTC(bool justSet);
 void rtcDisplayTime(bool showSeconds);
 void rtcChangeMinuteSync();
-void rtcSetTime(unsigned int newtodMils, unsigned int requestTime);
-void printTODFromMils(unsigned long t);
-
+void rtcSetTime(unsigned long newtodMils, unsigned int uncertainty);
+String strMilsToHms(unsigned long t);
+String strSyncState();
+String strDiffLength(unsigned long diff);
 
 #endif

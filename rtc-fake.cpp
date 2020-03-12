@@ -67,32 +67,65 @@ void rtcChangeMinuteSync(){ //m
   }
 }
 
-void rtcSetTime(unsigned int newtodMils, unsigned int requestTime){
+//mosstrMilsToHmsync
+unsigned long lastSyncMillis  = 0; //millis - used to "detect" sync gaps passing midnight (as long as it's <50 days!)
+unsigned long lastSyncTodMils = 0; //true time of day, in mils
+unsigned int  lastSyncUncMils = 0; //± uncertainty, in mils (1/2 the request time)
+long          lastSyncOffMils = 0; //how far the RTC had drifted
+//second most recent sync
+unsigned long prevSyncMillis  = 0;
+unsigned long prevSyncTodMils = 0;
+unsigned int  prevSyncUncMils = 0;
+long          prevSyncOffMils = 0;
+
+void rtcSetTime(unsigned long newtodMils, unsigned int uncertainty){
   // //TODO if setting a real RTC, don't set it until the top of the next second
   // //TODO I suppose ntpTime has been adjusted for leap seconds?
   
-  int drift = todMils-newtodMils;
-  todMils = newtodMils;
-  //
-  // rtc.setEpoch(ntpTime-2208988800UL); //set the rtc just so we can get the date. subtract 70 years to get to unix epoch
-  // rtcDate = rtc.getDay();
-  //
-  Serial.print(F("NTP request took ")); Serial.print(requestTime,DEC); Serial.print(F("ms. "));
-  Serial.print(F("RTC is off by ")); Serial.print(drift,DEC); Serial.print(F("ms ±")); Serial.print(requestTime/2,DEC); Serial.print(F("ms. "));
-  Serial.print(F("RTC set to ")); printTODFromMils(todMils); Serial.println(); Serial.println();
-  // ntpChecking = 0;
-  // ntpOK = 1;
-  // checkRTC(true);
+  prevSyncMillis  = lastSyncMillis;  lastSyncMillis  = millis();
+  prevSyncTodMils = lastSyncTodMils; lastSyncTodMils = newtodMils;
+  prevSyncUncMils = lastSyncUncMils; lastSyncUncMils = uncertainty;
+  prevSyncOffMils = lastSyncOffMils; lastSyncOffMils = (prevSyncTodMils? todMils-newtodMils: 0); //only if not set before
   
+  todMils = newtodMils;
+  
+  Serial.println(strSyncState());
 }
 
-void printTODFromMils(unsigned long t){
+String strMilsToHms(unsigned long t){
+  t = t%86400000;
+  String out = "";
   int todHrs = (t/1000)/3600;
   int todMin = ((t/1000)/60)%60;
   int todSec = (t/1000)%60;
   int todMil = t%1000;
-  if(todHrs<10) Serial.print(F("0")); Serial.print(todHrs); Serial.print(F(":"));
-  if(todMin<10) Serial.print(F("0")); Serial.print(todMin); Serial.print(F(":"));
-  if(todSec<10) Serial.print(F("0")); Serial.print(todSec); Serial.print(F("."));
-  if(todMil<100) Serial.print(F("0")); if(todMil<10) Serial.print(F("0")); Serial.print(todMil);
+  if(todHrs<10) out=out+F("0"); out=out+todHrs; out=out+F(":");
+  if(todMin<10) out=out+F("0"); out=out+todMin; out=out+F(":");
+  if(todSec<10) out=out+F("0"); out=out+todSec; out=out+F(".");
+  if(todMil<100) out=out+F("0"); if(todMil<10) out=out+F("0"); out=out+todMil;
+  return out;
+}
+
+String strSyncState(){
+  if(!lastSyncMillis) return "No NTP sync yet";
+  String out = "Last NTP sync at ";
+  out=out+strMilsToHms(lastSyncTodMils);
+  if(prevSyncMillis){
+    out=out+F(" ("); out=out+strDiffLength(millis()-lastSyncMillis); out=out+F(" ago)");
+    out=out+F("; drifted "); out=out+lastSyncOffMils; out=out+F(" ±"); out=out+lastSyncUncMils;
+    out=out+F("ms since sync at ");
+    out=out+strMilsToHms(prevSyncTodMils);
+    out=out+F(" ("); out=out+strDiffLength(lastSyncMillis-prevSyncMillis); out=out+F(" prior)");
+  }
+  else out=out+F(" (new)");
+  return out;
+}
+
+String strDiffLength(unsigned long diff){
+  String out = "";
+       if(diff<60000){    out=out+diff/1000;     out=out+F("s"); }
+  else if(diff<3600000){  out=out+diff/60000;    out=out+F("m"); }
+  else if(diff<86400000){ out=out+diff/3600000;  out=out+F("h"); }
+  else                  { out=out+diff/86400000; out=out+F("d"); }
+  return out;
 }

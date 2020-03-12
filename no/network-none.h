@@ -15,7 +15,6 @@ void networkStartAdmin(){}
 void networkStopAdmin(){}
 void checkClients(){}
 void networkToggleNTPTest(){}
-void printTODFromMils(unsigned long t){}
 void checkForWiFiStatusChange(){}
 
 #endif

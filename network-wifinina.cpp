@@ -145,7 +145,7 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
   
   Serial.print(millis()); Serial.print(" Received UDP packet from NTP server. Time is "); Serial.println(ntpTime);
 
-  rtcSetTime(newtodMils,requestTime);
+  rtcSetTime(newtodMils,requestTime/2);
   
   Udp.flush(); //in case of extraneous(?) data
   //Udp.stop() was formerly here
@@ -153,8 +153,7 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
 } //end fn checkNTP
 
 bool networkNTPOK(){
-  Serial.print(F("NTP is ")); Serial.print(millis()-ntpSyncLast < NTPOK_THRESHOLD?F("OK: "):F("stale: "));
-  Serial.print(millis()-ntpSyncLast); Serial.print("ms old (vs limit of "); Serial.print(NTPOK_THRESHOLD); Serial.print("ms)"); Serial.println();
+  //Serial.print(F("NTP is ")); Serial.print(millis()-ntpSyncLast < NTPOK_THRESHOLD?F("OK: "):F("stale: ")); Serial.print(millis()-ntpSyncLast); Serial.print("ms old (vs limit of "); Serial.print(NTPOK_THRESHOLD); Serial.print("ms)"); Serial.println();
   return (millis()-ntpSyncLast < NTPOK_THRESHOLD);
 }
 
@@ -207,7 +206,9 @@ void checkClients(){
             client.println();
 
             // the content of the HTTP response follows the header:
-            client.print(F("<!DOCTYPE html><html><head><title>Clock Admin</title><style>body { background-color: #222; color: white; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; } a { color: white; }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); $.ajax({ url: $(this).attr('data-action') }).fail(function(){ $('body').html('<p>Admin page has timed out. Please hold Select for 5 seconds to reactivate it.</p>'); }); }); });</script></head><body><h2>Clock Admin</h2><p><a href='#' data-action='/b'>Cycle brightness</a></p><p><a href='#' data-action='/s'>Test: toggle sec instead of min display</a></p><p><a href='#' data-action='/m'>Test: toggle sync frequency</a></p><p><a href='#' data-action='/n'>Test: toggle blocking NTP packets</a></p><p><a href='#' data-action='/d'>Print RTC date</a></p></body></html>"));
+            client.print(F("<!DOCTYPE html><html><head><title>Clock Admin</title><style>body { background-color: #222; color: white; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; } a { color: white; }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); $.ajax({ url: $(this).attr('data-action') }).fail(function(){ $('body').html('<p>Admin page has timed out. Please hold Select for 5 seconds to reactivate it, then <a href=\"./\">refresh</a>.</p>'); }); }); });</script></head><body><h2>Clock Admin</h2><p>"));
+            client.print(strSyncState());
+            client.print(F("</p><p><a href='#' data-action='/b'>Cycle brightness</a></p><p><a href='#' data-action='/s'>Test: toggle sec instead of min display</a></p><p><a href='#' data-action='/m'>Test: toggle sync frequency</a></p><p><a href='#' data-action='/n'>Test: toggle blocking NTP packets</a></p><p><a href='#' data-action='/d'>Print RTC date</a></p></body></html>"));
             //<p><a href='#' data-action=\"/w\">Test: disconnect WiFi</a></p>
 
             // The HTTP response ends with another blank line:
