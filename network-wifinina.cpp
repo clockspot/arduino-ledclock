@@ -1,17 +1,5 @@
 //network-wifinina.cpp
 
-/*
-To access the admin menu:
-
-Hold Select for 5 seconds. If you have already connected the clock to your WiFi network, it will flash its IP address (as a series of three 4-digit numbers), which you can now use to access the admin page.
-
-If not, it will display a 4-digit number, and begin broadcasting a WiFi hotspot with that number (such as “Clock 1234”). Connect to this hotspot and browse to 192.168.1.1 to access the admin page – where, if you like, you can connect the clock to your WiFi network [which will discontinue the hotspot].
-
-For security, the clock will stop serving the admin page (and hotspot if applicable) after 2 minutes of inactivity. To access it again, hold Select for 5 seconds as above. (It will stay connected to WiFi to continue requesting NTP syncs, weather forecasts, etc. I might add a password feature later, but I thought this physical limitation would be security enough for now.)
-
-To change or forget the WiFi network the clock is connected to, use the admin page, or simply hold Select for 15 seconds (through the end of the IP address) to forget the network (the display will blink).
-*/
-
 #include "Arduino.h"
 #include <SPI.h>
 #include <WiFiNINA.h>
@@ -23,11 +11,12 @@ To change or forget the WiFi network the clock is connected to, use the admin pa
 #include RTC_H //definitions for the RTC for calling the display
 
 //#include "secrets.h" //supply your own
-String ssid = "Riley";
+String ssid = "Riley"; //Stopping place: this should be empty and fillable via settings page. Then make it save in feeprom. Also ditch the fake rtc.
 String pass = "5802301644";
 //char ssid[] = SECRET_SSID; // your network SSID (name)
 //char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
 int keyIndex = 0; // your network key Index number (needed only for WEP)
+int WiFiEnabled = 0; //whether the customer wants to even use it TODO have this control the seconds display in part
 
 unsigned int localPort = 2390; // local port to listen for UDP packets
 IPAddress timeServer(129, 6, 15, 28); // time.nist.gov NTP server
@@ -65,6 +54,7 @@ void networkLoop(){
 
 void networkStartWiFi(){
   WiFi.disconnect(); //if AP is going, stop it
+  if(ssid=="") return; //don't try to connect if there's no data
   checkForWiFiStatusChange(); //just for serial logging
   rtcDisplayTime(false); //display time without seconds
   Serial.println(); Serial.print(millis()); Serial.print(F(" Attempting to connect to SSID: ")); Serial.println(ssid);
@@ -87,6 +77,7 @@ void networkStartAP(){
   if(WiFi.beginAP("Clock")==WL_AP_LISTENING){ //Change "beginAP" if you want to create an WEP network
     Serial.print("SSID: "); Serial.println(WiFi.SSID());
     //by default the local IP address of will be 192.168.4.1 - override with WiFi.config(IPAddress(10, 0, 0, 1));
+    WiFi.config(IPAddress(7,7,7,7));
     Serial.print("Access the admin page by browsing to http://"); Serial.println(WiFi.localIP());
     //server.begin() was formerly here
   }
@@ -167,13 +158,17 @@ unsigned long adminInputLast = 0; //for noticing when the admin page hasn't been
 
 void networkStartAdmin(){
   adminInputLast = millis();
-  if(WiFi.status()!=WL_CONNECTED) networkStartAP();
   //TODO display should handle its own code for displaying a type of stuff
-  IPAddress theip = WiFi.localIP();
-  displayByte(theip[0]); delay(2500);
-  displayByte(theip[1]); delay(2500);
-  displayByte(theip[2]); delay(2500);
-  displayByte(theip[3]); delay(2500);
+  if(WiFi.status()!=WL_CONNECTED){
+    networkStartAP();
+    displayInt(7777); delay(2500);
+  } else { //use existing wifi
+    IPAddress theip = WiFi.localIP();
+    displayInt(theip[0]); delay(2500);
+    displayInt(theip[1]); delay(2500);
+    displayInt(theip[2]); delay(2500);
+    displayInt(theip[3]); delay(2500);
+  }
   displayClear();
 }
 void networkStopAdmin(){

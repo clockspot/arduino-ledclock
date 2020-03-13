@@ -77,17 +77,19 @@ void displayTime(unsigned long mils, bool showSeconds){
 void displayClear(){
   for(int i=0; i<NUM_MAX; i++) { lc.clearDisplay(i); }
 }
-void displayByte(byte b){
+void displayInt(int n){
   int ci = (NUM_MAX*8)-1; //total column index - we will start at the last one and move backward
   //display index = (NUM_MAX-1)-(ci/8)
   //display column index = ci%8
   displayClear();
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<100?0:bignum[(b/100)     *5+i])); ci--; }
-  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (b<10? 0:bignum[((b%100)/10)*5+i])); ci--; }
-  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, 0); ci--; } //1col gap
-  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          bignum[(b%10)      *5+i]);  ci--; }
-} //end fn displayByte
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (n<1000? 0: bignum[(n/1000)       *5+i]) ); ci--; }
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          0                               ); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (n<100?  0: bignum[((n%1000)/100) *5+i]) ); ci--; }
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          0                               ); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8, (n<10?   0: bignum[((n%100)/10)   *5+i]) ); ci--; }
+  for(int i=0; i<1; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,          0                               ); ci--; } //1col gap
+  for(int i=0; i<5; i++){ lc.setColumn((NUM_MAX-1)-(ci/8),ci%8,             bignum[(n%10)         *5+i]  ); ci--; }
+} //end fn displayInt
 
 int displayToggleBrightness(){
   switch(curBrightness){
