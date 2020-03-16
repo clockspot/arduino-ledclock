@@ -15,7 +15,8 @@ const byte vPatch = 1;
 #include "controller.h"
 
 void setup() {
-  Serial.begin(9600); //while(!Serial); //only works on 33 IOT
+  Serial.begin(9600);
+  while(!Serial); //only works on 33 IOT
   delay(1000);
   displaySetup();
   rtcSetup();

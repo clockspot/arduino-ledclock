@@ -16,7 +16,6 @@ String pass = "5802301644";
 //char ssid[] = SECRET_SSID; // your network SSID (name)
 //char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
 int keyIndex = 0; // your network key Index number (needed only for WEP)
-int WiFiEnabled = 0; //whether the customer wants to even use it TODO have this control the seconds display in part
 
 unsigned int localPort = 2390; // local port to listen for UDP packets
 IPAddress timeServer(129, 6, 15, 28); // time.nist.gov NTP server
@@ -192,21 +191,22 @@ void checkClients(){
     while (client.connected()) { // loop while the client's connected
       if (client.available()) { // if there's bytes to read from the client,
         char c = client.read();
+        Serial.write(c); //DEBUG
 
+        /*
+        Current approach:
+        If the byte is a new line character
+          If the line is blank, that's the end of the client HTTP request, so send a response
+            If there was a result, just print the result
+            Else render the page
+          Else (line not blank, but is a newline)
+            Clear Currentline
+        Else (not a newline), add it to Currentline unless it's a return character
+        */
+        
 
         if (c == '\n') {                    // if the byte is a newline character
         
-        
-        // if(c != '\n'){ //If the byte is not a newline character
-        //   if(c != '\r') currentLine += c; //add the character to currentLine (except carriage returns)
-        // } else { //end of the line: do something with it
-
-          // //Inspect the end of the line to see if it was a command
-          //      if (currentLine.endsWith("GET /m"))  result = (rtcChangeMinuteSync()? F("Now syncing every minute."): F("Now syncing every hour at minute 59.")); //TESTSyncEveryMinute
-          // else if (currentLine.endsWith("GET /n"))  result = (networkToggleNTPTest()? F("Now preventing incoming NTP packets."): F("Now allowing incoming NTP packets."));
-          // else if (currentLine.endsWith("GET /b")){ result = F("Display brightness set to "); result+=displayToggleBrightness(); result+=F("."); }
-
-
           // if the current line is blank, you got two newline characters in a row.
           // that's the end of the client HTTP request, so send a response:
           if (currentLine.length() == 0) {
@@ -214,6 +214,7 @@ void checkClients(){
             // and a content-type so the client knows what's coming, then a blank line:
             client.println("HTTP/1.1 200 OK");
             client.println("Content-type:text/html");
+            client.println("Access-Control-Allow-Origin:*");
             client.println();
             
             if(result!="") client.print(result); //If this is in response to a specific action request, just send the client the result message
@@ -245,14 +246,12 @@ void checkClients(){
           currentLine += c;      // add it to the end of the currentLine
         }
 
-        // // Check to see if the client request was
-        //      if (currentLine.endsWith("GET /m")) rtcChangeMinuteSync();
-        // else if (currentLine.endsWith("GET /n")) networkToggleNTPTest();
-        // else if (currentLine.endsWith("GET /b")) displayToggleBrightness();
         //Inspect the end of the line to see if it was a command
              if (currentLine.endsWith("GET /m"))  result = (rtcChangeMinuteSync()? F("Now syncing every minute."): F("Now syncing every hour at minute 59.")); //TESTSyncEveryMinute
         else if (currentLine.endsWith("GET /n"))  result = (networkToggleNTPTest()? F("Now preventing incoming NTP packets."): F("Now allowing incoming NTP packets."));
         else if (currentLine.endsWith("GET /b")){ result = F("Display brightness set to "); result+=displayToggleBrightness(); result+=F("."); }
+        else if (currentLine.endsWith("GET /")){ result = ""; } //just display page
+        else { result = currentLine; }
         
       } //end if client available
     } //end while client connected
