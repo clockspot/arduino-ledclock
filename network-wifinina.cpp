@@ -186,84 +186,84 @@ void checkClients(){
     adminInputLast = millis();
     
     String currentLine = ""; //we'll read the data from the client one line at a time
-    
-    int requestCode = 0;
+    int requestType = 0;
+    bool newlineSeen = false;
 
-    while (client.connected()) { // loop while the client's connected
-      if (client.available()) { // if there's bytes to read from the client,
+    if(client.connected()){
+      while(client.available()){ //if there's bytes to read from the client
         char c = client.read();
         Serial.write(c); //DEBUG
-
-        /*
-        Proposed approach:
-        If the byte is not a newline character
-          Add it to Currentline unless it's a return character
-        Else (it's a newline)
-          If Currentline is not empty
-            Clear Currentline
-          Else (Currentline is empty), that was two newlines in a row, we're done, so send a response
-            If there was a result, print that
-            Otherwise render the page
-        */
-
-        if(c != '\n'){ //If the byte is not a newline character
-          if(c != '\r') currentLine += c; //add the character to currentLine (except carriage returns)
+        
+        if(c=='\n') newlineSeen = true;
+        else {
+          if(newlineSeen){ currentLine = ""; newlineSeen = false; } //if we see a newline and then something else: clear current line
+          currentLine += c;
         }
-        else { //newline character: end of this line: do something with it
-          if(currentLine != ""){ //the line had content
-            //Inspect the end of the line to see if it was a command
-            if      (currentLine.startsWith("GET / HTTP")) requestCode = 0; //display the form //stopping place: this didn't work
-            else if (currentLine.startsWith("GET /m")) requestCode = 1; //sync frequency
-            else if (currentLine.startsWith("GET /n")) requestCode = 2; //packets
-            else if (currentLine.startsWith("GET /b")) requestCode = 3; //brightness
-            else    requestCode = -1; //idk
-            //Serial.print("requestCode is "); Serial.println(requestCode);
-            //Clear the buffer for the next line of data
-            currentLine = "";
-          }
-          else { //the line was empty – meaning we've just had two newline characters in a row – the end of the request - so act appropriately and send a reply
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println("Access-Control-Allow-Origin:*");
-            client.println();
-            switch(requestCode){
-              case 0: //display the full page
-                client.print(F("<!DOCTYPE html><html><head><title>Clock Settings</title><style>body { background-color: #eee; color: #222; font-family: -apple-system, sans-serif; font-size: 18px; margin: 1.5em; position: absolute; } a { color: #33a; } ul { padding-left: 9em; text-indent: -9em; list-style: none; } ul li { margin-bottom: 1.2em; } ul li label { display: inline-block; width: 8em; text-align: right; padding-right: 1em; text-indent: 0; font-weight: bold; } ul li.nolabel { margin-left: 9em; } #result { display: none; position: fixed; left: 0; top: 0; width: 100%; padding: 1.5em; box-sizing: border-box; text-align: center; background-color: #8c8; color: #020; } @media only screen and (max-width: 550px) { ul { padding-left: 0; text-indent: 0; } ul li label { display: block; width: auto; text-align: left; padding: 0; } ul li.nolabel { margin-left: 0; }} @media (prefers-color-scheme: dark) { body { background-color: #222; color: #ddd; } a { color: white; } #result { background-color: #373; color: white; }}</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><script src='https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js'></script><script type='text/javascript'>$(function(){ $('a').click(function(e){ e.preventDefault(); timer = setTimeout(timedOut,120000); $.ajax({ url: $(this).attr('data-action') }).done(function(d){$('#result').html(d).stop().slideDown(300); hideResultTimer = setTimeout(hideResult,2000);}).fail(timedOut); }); function timedOut(){ $('body').html('<p>Clock settings page has timed out. Please hold Select for 5 seconds to reactivate it, then <a href=\"./\">refresh</a>.</p>'); } function hideResult(){$('#result').slideUp(300);} let timer = setTimeout(timedOut,120000); let hideResultTimer; });</script></head><body><div id='result'></div><h2 style='margin-top: 0;'>Clock Settings</h2><ul>"));
-          
-                client.print(F("<li><label>Last sync</label>As of page load time: ")); client.print(getLastSync()); client.print(F("</li>"));
-          
-                client.print(F("<li><label>Sync frequency</label><a href='#' data-action='/m'>Toggle sync frequency</a></li>"));
-                client.print(F("<li><label>Sync block</label><a href='#' data-action='/n'>Toggle blocking NTP packets</a></li>"));
-                client.print(F("<li><label>Brightness</label><a href='#' data-action='/b'>Cycle brightness</a></li>"));
-                client.print(F("<li><label>Version</label>"));
-                //client.print(getSoftwareVersion());
-                client.print(F("</li>"));
-                client.print(F("</ul></body></html>"));
-                break;
-              case 1: //sync frequency
-                client.print(rtcChangeMinuteSync()? F("Now syncing every minute."): F("Now syncing every hour at minute 59."));
-                break;
-              case 2:
-                client.print(networkToggleNTPTest()? F("Now preventing incoming NTP packets."): F("Now allowing incoming NTP packets."));
-                break;
-              case 3:
-                client.print(F("Display brightness set to "));
-                client.print(displayToggleBrightness());
-                client.print(F("."));
-                break;
-              default:
-                client.print(F("Error: unknown request.")); break;
-            }
-            // The HTTP response ends with another blank line:
-            client.println();
-            // break out of the while loop:
+
+        //Find the request type and path from the first line.
+        if(!requestType){
+          if(currentLine=="GET / ") { requestType = 1; break; } //Read no more. We'll render out the page.
+          if(currentLine=="POST / ") requestType = 2; //We'll keep reading til the last line.
+          if(c=='\n') break; //End of first line without matching the above: return nothing.
+        }
+        
+      } //end whie client available
+    } //end if client connected
+    
+    if(requestType){
+      // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+      // and a content-type so the client knows what's coming, then a blank line:
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-type:text/html");
+      client.println("Access-Control-Allow-Origin:*");
+      client.println();
+      if(requestType==1){ //get
+        client.print(F("<!DOCTYPE html><html><head><title>Clock Settings</title><style>body { background-color: #eee; color: #222; font-family: system-ui, -apple-system, sans-serif; font-size: 18px; margin: 1.5em; position: absolute; } a { color: #33a; } ul { padding-left: 9em; text-indent: -9em; list-style: none; } ul li { margin-bottom: 0.8em; } ul li * { text-indent: 0; padding: 0; } ul li label:first-child { display: inline-block; width: 8em; text-align: right; padding-right: 1em; font-weight: bold; } ul li.nolabel { margin-left: 9em; } input[type='text'],input[type='submit'],select { border: 1px solid #999; margin: 0.2em 0; padding: 0.1em 0.3em; font-size: 1em; font-family: system-ui, -apple-system, sans-serif; } @media only screen and (max-width: 550px) { ul { padding-left: 0; text-indent: 0; } ul li label:first-child { display: block; width: auto; text-align: left; padding: 0; } ul li.nolabel { margin-left: 0; }} .saving { color: #66d; } .ok { color: #3a3; } .error { color: #c53; } @media (prefers-color-scheme: dark) { body { background-color: #222; color: #ddd; } a { color: white; } #result { background-color: #373; color: white; } input[type='text'],select { background-color: #444; color: #ddd; } }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'></head><body><h2 style='margin-top: 0;'>Clock Settings</h2><div id='content'><ul>"));
+        client.print(F("<li><label>Wi-Fi</label><form id='wform' style='display: inline;' onsubmit='save(this); return false;'><select id='wtype' onchange='wformchg()'><option value=''>None</option><option value='wpa'>WPA</option><option value='wep'>WEP</option></select><span id='wa'><br/><input type='text' id='wssid' name='wssid' placeholder='SSID (Network Name)' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='<?php echo $curwssid; ?>' /><br/><input type='text' id='wpass' name='wpass' placeholder='Password/Key' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='<?php echo $curwpass; ?>' /></span><span id='wb'><br/><input type='text' id='wki' name='wki' placeholder='Key Index' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='<?php echo $curwki; ?>' /></span><br/><input id='wformsubmit' type='submit' value='Save' style='display: none;' /></form></li>"));
+        client.print(F("<li><label>Last sync</label>As of page load time: [sync state]</li>"));
+        client.print(F("<li><label>Sync frequency</label><select id='syncfreq' onchange='save(this)'><option value='min'>Every minute</option><option value='hr'>Every hour (at min :59)</option></select></li>"));
+        client.print(F("<li><label>NTP packets</label><select id='ntpok' onchange='save(this)'><option value='y'>Yes (normal)</option><option value='n'>No (for dev/testing)</option></select></li>"));
+        client.print(F("<li><label>Brightness</label><select id='bright' onchange='save(this)'><option value='3'>High</option><option value='2'>Medium</option><option value='1'>Low</option></select></li>"));
+        client.print(F("<li><label>Version</label>TBD</li>"));
+        //After replacing the below from formdev.php, replace " with \"
+        client.print(F("</ul></div><script type='text/javascript'>function e(id){ return document.getElementById(id); } function save(ctrl){ if(ctrl.disabled) return; ctrl.disabled = true; let ind = ctrl.nextSibling; if(ind && ind.tagName==='SPAN') ind.parentNode.removeChild(ind); ind = document.createElement('span'); ind.innerHTML = '&nbsp;<span class=\"saving\">Saving&hellip;</span>'; ctrl.parentNode.insertBefore(ind,ctrl.nextSibling); let xhr = new XMLHttpRequest(); xhr.onreadystatechange = function(){ if(xhr.readyState==4){ ctrl.disabled = false; if(xhr.status==200 && !xhr.responseText){ if(ctrl.id=='wform'){ e('content').innerHTML = '<p class=\"ok\">Wi-Fi changes applied.</p><p>' + (e('wssid').value? 'Now attempting to connect to <strong>'+e('wssid').value+'</strong>.</p><p>If successful, the clock will display its IP address. To access this settings page again, connect to <strong>'+e('wssid').value+'</strong> and visit that IP address.</p><p>If not successful, the clock will display <strong>7777</strong>. ': '') + 'To access this settings page again, connect to Wi-Fi network <strong>Clock</strong> and visit <a href=\"http://7.7.7.7\">7.7.7.7</a>.</p>'; } else { ind.innerHTML = '&nbsp;<span class=\"ok\">OK!</span>'; setTimeout(function(){ if(ind.parentNode) ind.parentNode.removeChild(ind); },1500); } } else ind.innerHTML = '&nbsp;<span class=\"error\">'+xhr.responseText+'</span>'; } }; xhr.open('POST', './', true); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded'); if(ctrl.id=='wform'){ switch(e('wtype').value){ case '': e('wssid').value = ''; e('wpass').value = ''; case 'wpa': e('wki').value = ''; case 'wep': default: break; } xhr.send('wssid='+e('wssid').value+'&wpass='+e('wpass').value+'&wki='+e('wki').value); } else { xhr.send(ctrl.id+'='+ctrl.value); } } function wformchg(initial){ if(initial) e('wtype').value = (e('wssid').value? (e('wki').value? 'wep': 'wpa'): ''); e('wa').style.display = (e('wtype').value==''?'none':'inline'); e('wb').style.display = (e('wtype').value=='wep'?'inline':'none'); if(!initial) e('wformsubmit').style.display = 'inline'; } wformchg(true);</script></body></html>"));
+        //client.print(F(""));
+      } //end get
+      else { //post
+        //TODO do things and possibly return the failed result
+        //syncfreq=hr
+        //syncfreq=min
+        //wssid=Riley&You&Me&wpass=5802301644&wki=1234
+        client.print(F("It was: "));
+        client.println(currentLine);
+      } //end post
+    } //end if requestType
+    
+    if(false){
+
+        switch(requestCode){
+          case 0: //display the full page
+
             break;
-          } //end empty line / end of request
-        } //end newline character
-      } //end if client available
-    } //end while client connected
+          case 1: //sync frequency
+            client.print(rtcChangeMinuteSync()? F("Now syncing every minute."): F("Now syncing every hour at minute 59."));
+            break;
+          case 2:
+            client.print(networkToggleNTPTest()? F("Now preventing incoming NTP packets."): F("Now allowing incoming NTP packets."));
+            break;
+          case 3:
+            client.print(F("Display brightness set to "));
+            client.print(displayToggleBrightness());
+            client.print(F("."));
+            break;
+          default:
+            client.print(F("Error: unknown request.")); break;
+        }
+        // The HTTP response ends with another blank line:
+        client.println();
+        // break out of the while loop:
+        break;
+      } //end empty line / end of request
     
     // close the connection:
     client.stop();
