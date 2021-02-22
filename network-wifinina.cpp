@@ -14,6 +14,7 @@ String wssid = "Riley";
 String wpass = "5802301644"; //wpa pass or wep key
 byte wki = 0; //wep key index - 0 if using wpa
 //Stopping place: this should be empty and fillable via settings page. Then make it save in feeprom. Also ditch the fake rtc.
+//Stopping place also: disconnecting and reconnecting the wifi doesn't work as expected, why? Don't want to power it off (see "//newly" because that seems to muck up the server
 
 unsigned int localPort = 2390; // local port to listen for UDP packets
 IPAddress timeServer(129, 6, 15, 28); // time.nist.gov NTP server
@@ -64,7 +65,10 @@ void networkStartWiFi(){
     Serial.print(F("Access the admin page by browsing to http://")); Serial.println(WiFi.localIP());
     //server.begin() was formerly here
   }
-  else Serial.println(" Wasn't able to connect.");
+  else {
+    Serial.println(F(" Wasn't able to connect."));
+    //WiFi.end(); //newly
+  }
   checkForWiFiStatusChange(); //just for serial logging
 } //end fn startWiFi
 
@@ -79,13 +83,17 @@ void networkStartAP(){
     Serial.print(F("Access the admin page by browsing to http://")); Serial.println(WiFi.localIP());
     //server.begin() was formerly here
   }
-  else Serial.println(" Wasn't able to create access point.");
+  else {
+    Serial.println(F(" Wasn't able to create access point."));
+    //WiFi.end(); //newly
+  }
   checkForWiFiStatusChange(); //just for serial logging
 } //end fn startAP
 
 void networkDisconnectWiFi(){
   //Serial.println(F("Disconnecting WiFi - will try to connect at next NTP sync time"));
   WiFi.disconnect();
+  //WiFi.end(); //newly
 }
 
 
@@ -172,6 +180,9 @@ void networkStartAdmin(){
 void networkStopAdmin(){
   adminInputLast = 0; //TODO use a different flag from adminInputLast
   if(WiFi.status()!=WL_CONNECTED) networkStartWiFi();
+  // if(WiFi.status()!=WL_CONNECTED) { //if connected to wifi, leave it
+  //   WiFi.end(); networkStartWiFi(); //if not (eg AP or disconnected), kill it, and try to start it
+  // } //newly
 }
 
 void checkClients(){
@@ -284,6 +295,11 @@ void checkClients(){
     
     client.stop();
     Serial.println("client disconnected");
+    
+    if(requestType==3) { //wifi was changed - restart the admin
+      networkStartWiFi(); //try to connect to wifi with new settings
+      networkStartAdmin(); //will set up AP if wifi isn't connected
+    }
   }
 }
 
