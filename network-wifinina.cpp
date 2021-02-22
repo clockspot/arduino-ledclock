@@ -10,12 +10,10 @@
 #include DISPLAY_H //definitions for the display (as defined in config)
 #include RTC_H //definitions for the RTC for calling the display
 
-//#include "secrets.h" //supply your own
-String ssid = "Riley"; //Stopping place: this should be empty and fillable via settings page. Then make it save in feeprom. Also ditch the fake rtc.
-String pass = "5802301644";
-//char ssid[] = SECRET_SSID; // your network SSID (name)
-//char pass[] = SECRET_PASS; // your network password (use for WPA, or use as key for WEP)
-int keyIndex = 0; // your network key Index number (needed only for WEP)
+String wssid = "Riley";
+String wpass = "5802301644"; //wpa pass or wep key
+byte wki = 0; //wep key index - 0 if using wpa
+//Stopping place: this should be empty and fillable via settings page. Then make it save in feeprom. Also ditch the fake rtc.
 
 unsigned int localPort = 2390; // local port to listen for UDP packets
 IPAddress timeServer(129, 6, 15, 28); // time.nist.gov NTP server
@@ -31,8 +29,8 @@ const unsigned long NTPOK_THRESHOLD = 3600000; //if no sync within 60 minutes, t
 
 void networkSetup(){
   //Check status of wifi module up front
-  if(WiFi.status()==WL_NO_MODULE){ Serial.println("Communication with WiFi module failed!"); while(true); }
-  else if(WiFi.firmwareVersion()<WIFI_FIRMWARE_LATEST_VERSION) Serial.println("Please upgrade the firmware");
+  if(WiFi.status()==WL_NO_MODULE){ Serial.println(F("Communication with WiFi module failed!")); while(true); }
+  else if(WiFi.firmwareVersion()<WIFI_FIRMWARE_LATEST_VERSION) Serial.println(F("Please upgrade the firmware"));
   
   //Create the server and UDP objects before WiFi is even going
   server.begin();
@@ -53,16 +51,17 @@ void networkLoop(){
 
 void networkStartWiFi(){
   WiFi.disconnect(); //if AP is going, stop it
-  if(ssid=="") return; //don't try to connect if there's no data
+  if(wssid==F("")) return; //don't try to connect if there's no data
   checkForWiFiStatusChange(); //just for serial logging
   rtcDisplayTime(false); //display time without seconds
-  Serial.println(); Serial.print(millis()); Serial.print(F(" Attempting to connect to SSID: ")); Serial.println(ssid);
-  WiFi.begin(ssid.c_str(), pass.c_str()); //hangs while connecting
+  Serial.println(); Serial.print(millis()); Serial.print(F(" Attempting to connect to SSID: ")); Serial.println(wssid);
+  if(wki) WiFi.begin(wssid.c_str(), wki, wpass.c_str()); //WEP - hangs while connecting
+  else WiFi.begin(wssid.c_str(), wpass.c_str()); //WPA - hangs while connecting
   if(WiFi.status()==WL_CONNECTED){ //did it work?
-    Serial.print(millis()); Serial.println(" Connected!");
-    Serial.print("SSID: "); Serial.println(WiFi.SSID());
-    Serial.print("Signal strength (RSSI):"); Serial.print(WiFi.RSSI()); Serial.println(" dBm");
-    Serial.print("Access the admin page by browsing to http://"); Serial.println(WiFi.localIP());
+    Serial.print(millis()); Serial.println(F(" Connected!"));
+    Serial.print(F("SSID: ")); Serial.println(WiFi.SSID());
+    Serial.print(F("Signal strength (RSSI):")); Serial.print(WiFi.RSSI()); Serial.println(F(" dBm"));
+    Serial.print(F("Access the admin page by browsing to http://")); Serial.println(WiFi.localIP());
     //server.begin() was formerly here
   }
   else Serial.println(" Wasn't able to connect.");
@@ -72,12 +71,12 @@ void networkStartWiFi(){
 void networkStartAP(){
   WiFi.disconnect(); //if wifi is going, stop it
   checkForWiFiStatusChange(); //just for serial logging
-  Serial.println(); Serial.print(millis()); Serial.println(" Creating access point");
+  Serial.println(); Serial.print(millis()); Serial.println(F(" Creating access point"));
   if(WiFi.beginAP("Clock")==WL_AP_LISTENING){ //Change "beginAP" if you want to create an WEP network
-    Serial.print("SSID: "); Serial.println(WiFi.SSID());
+    Serial.print(F("SSID: ")); Serial.println(WiFi.SSID());
     //by default the local IP address of will be 192.168.4.1 - override with WiFi.config(IPAddress(10, 0, 0, 1));
     WiFi.config(IPAddress(7,7,7,7));
-    Serial.print("Access the admin page by browsing to http://"); Serial.println(WiFi.localIP());
+    Serial.print(F("Access the admin page by browsing to http://")); Serial.println(WiFi.localIP());
     //server.begin() was formerly here
   }
   else Serial.println(" Wasn't able to create access point.");
@@ -100,7 +99,7 @@ void startNTP(){ //Called at intervals to check for ntp time
   ntpStartLast = millis();
   Udp.flush(); //in case of old data
   //Udp.stop() was formerly here
-  Serial.println(); Serial.print(millis()); Serial.println(" Sending UDP packet to NTP server.");
+  Serial.println(); Serial.print(millis()); Serial.println(F(" Sending UDP packet to NTP server."));
   memset(packetBuffer, 0, NTP_PACKET_SIZE); // set all bytes in the buffer to 0
   // Initialize values needed to form NTP request
   packetBuffer[0] = 0b11100011;   // LI, Version, Mode
@@ -126,7 +125,7 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
   unsigned int requestTime = ntpSyncLast-ntpStartLast;
   Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
   
-  if(TESTNTPfail) { Udp.flush(); return; Serial.println("NTP came back but discarding"); } //you didn't see anything...
+  if(TESTNTPfail) { Udp.flush(); return; Serial.println(F("NTP came back but discarding")); } //you didn't see anything...
   
   //https://forum.arduino.cc/index.php?topic=526792.0
   unsigned long ntpTime = (packetBuffer[40] << 24) | (packetBuffer[41] << 16) | (packetBuffer[42] << 8) | packetBuffer[43];
@@ -136,7 +135,7 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
   ntpTime += OFFSET; //timezone correction
   unsigned long newtodMils = (ntpTime%86400)*1000+ntpMils+(requestTime/2); //ntpTime stamp, plus milliseconds, plus half the request time
   
-  Serial.print(millis()); Serial.print(" Received UDP packet from NTP server. Time is "); Serial.println(ntpTime);
+  Serial.print(millis()); Serial.print(F(" Received UDP packet from NTP server. Time is ")); Serial.println(ntpTime);
 
   rtcSetTime(newtodMils,requestTime/2);
   
@@ -146,7 +145,7 @@ void checkNTP(){ //Called on every cycle to see if there is an ntp response to h
 } //end fn checkNTP
 
 bool networkNTPOK(){
-  //Serial.print(F("NTP is ")); Serial.print(millis()-ntpSyncLast < NTPOK_THRESHOLD?F("OK: "):F("stale: ")); Serial.print(millis()-ntpSyncLast); Serial.print("ms old (vs limit of "); Serial.print(NTPOK_THRESHOLD); Serial.print("ms)"); Serial.println();
+  //Serial.print(F("NTP is ")); Serial.print(millis()-ntpSyncLast < NTPOK_THRESHOLD?F("OK: "):F("stale: ")); Serial.print(millis()-ntpSyncLast); Serial.print(F("ms old (vs limit of ")); Serial.print(NTPOK_THRESHOLD); Serial.print(F("ms)")); Serial.println();
   return (millis()-ntpSyncLast < NTPOK_THRESHOLD);
 }
 
@@ -219,29 +218,49 @@ void checkClients(){
       client.println();
       if(requestType==1){ //get
         client.print(F("<!DOCTYPE html><html><head><title>Clock Settings</title><style>body { background-color: #eee; color: #222; font-family: system-ui, -apple-system, sans-serif; font-size: 18px; margin: 1.5em; position: absolute; } a { color: #33a; } ul { padding-left: 9em; text-indent: -9em; list-style: none; } ul li { margin-bottom: 0.8em; } ul li * { text-indent: 0; padding: 0; } ul li label:first-child { display: inline-block; width: 8em; text-align: right; padding-right: 1em; font-weight: bold; } ul li.nolabel { margin-left: 9em; } input[type='text'],input[type='submit'],select { border: 1px solid #999; margin: 0.2em 0; padding: 0.1em 0.3em; font-size: 1em; font-family: system-ui, -apple-system, sans-serif; } @media only screen and (max-width: 550px) { ul { padding-left: 0; text-indent: 0; } ul li label:first-child { display: block; width: auto; text-align: left; padding: 0; } ul li.nolabel { margin-left: 0; }} .saving { color: #66d; } .ok { color: #3a3; } .error { color: #c53; } @media (prefers-color-scheme: dark) { body { background-color: #222; color: #ddd; } a { color: white; } #result { background-color: #373; color: white; } input[type='text'],select { background-color: #444; color: #ddd; } }</style><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'></head><body><h2 style='margin-top: 0;'>Clock Settings</h2><div id='content'><ul>"));
-        client.print(F("<li><label>Wi-Fi</label><form id='wform' style='display: inline;' onsubmit='save(this); return false;'><select id='wtype' onchange='wformchg()'><option value=''>None</option><option value='wpa'>WPA</option><option value='wep'>WEP</option></select><span id='wa'><br/><input type='text' id='wssid' name='wssid' placeholder='SSID (Network Name)' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='<?php echo $curwssid; ?>' /><br/><input type='text' id='wpass' name='wpass' placeholder='Password/Key' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='<?php echo $curwpass; ?>' /></span><span id='wb'><br/><input type='text' id='wki' name='wki' placeholder='Key Index' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='<?php echo $curwki; ?>' /></span><br/><input id='wformsubmit' type='submit' value='Save' style='display: none;' /></form></li>"));
+        client.print(F("<li><label>Wi-Fi</label><form id='wform' style='display: inline;' onsubmit='save(this); return false;'><select id='wtype' onchange='wformchg()'><option value=''>None</option><option value='wpa'>WPA</option><option value='wep'>WEP</option></select><span id='wa'><br/><input type='text' id='wssid' name='wssid' placeholder='SSID (Network Name)' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='")); client.print(wssid); client.print(F("' /><br/><input type='text' id='wpass' name='wpass' placeholder='Password/Key' autocomplete='off' onchange='wformchg()' onkeyup='wformchg()' value='")); client.print(wpass); client.print(F("' /></span><span id='wb'><br/><label for='wki'>Key Index</label> <select id='wki' onchange='wformchg()'>")); for(char i=0; i<=4; i++){ client.print(F("<option value='")); client.print(i,DEC); client.print(F("' ")); client.print(wki==i?F("selected"):F("")); client.print(F(">")); if(i==0) client.print(F("Select")); else client.print(i,DEC); client.print(F("</option>")); } client.print(F("</select></span><br/><input id='wformsubmit' type='submit' value='Save' style='display: none;' /></form></li>"));
         client.print(F("<li><label>Last sync</label>As of page load time: [sync state]</li>"));
         client.print(F("<li><label>Sync frequency</label><select id='syncfreq' onchange='save(this)'><option value='min'>Every minute</option><option value='hr'>Every hour (at min :59)</option></select></li>"));
         client.print(F("<li><label>NTP packets</label><select id='ntpok' onchange='save(this)'><option value='y'>Yes (normal)</option><option value='n'>No (for dev/testing)</option></select></li>"));
         client.print(F("<li><label>Brightness</label><select id='bright' onchange='save(this)'><option value='3'>High</option><option value='2'>Medium</option><option value='1'>Low</option></select></li>"));
         client.print(F("<li><label>Version</label>TBD</li>"));
         //After replacing the below from formdev.php, replace " with \"
-        client.print(F("</ul></div><script type='text/javascript'>function e(id){ return document.getElementById(id); } function save(ctrl){ if(ctrl.disabled) return; ctrl.disabled = true; let ind = ctrl.nextSibling; if(ind && ind.tagName==='SPAN') ind.parentNode.removeChild(ind); ind = document.createElement('span'); ind.innerHTML = '&nbsp;<span class=\"saving\">Saving&hellip;</span>'; ctrl.parentNode.insertBefore(ind,ctrl.nextSibling); let xhr = new XMLHttpRequest(); xhr.onreadystatechange = function(){ if(xhr.readyState==4){ ctrl.disabled = false; if(xhr.status==200 && !xhr.responseText){ if(ctrl.id=='wform'){ e('content').innerHTML = '<p class=\"ok\">Wi-Fi changes applied.</p><p>' + (e('wssid').value? 'Now attempting to connect to <strong>'+e('wssid').value+'</strong>.</p><p>If successful, the clock will display its IP address. To access this settings page again, connect to <strong>'+e('wssid').value+'</strong> and visit that IP address.</p><p>If not successful, the clock will display <strong>7777</strong>. ': '') + 'To access this settings page again, connect to Wi-Fi network <strong>Clock</strong> and visit <a href=\"http://7.7.7.7\">7.7.7.7</a>.</p>'; } else { ind.innerHTML = '&nbsp;<span class=\"ok\">OK!</span>'; setTimeout(function(){ if(ind.parentNode) ind.parentNode.removeChild(ind); },1500); } } else ind.innerHTML = '&nbsp;<span class=\"error\">'+xhr.responseText+'</span>'; timer = setTimeout(timedOut, 120000); } }; xhr.open('POST', './', true); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded'); if(ctrl.id=='wform'){ switch(e('wtype').value){ case '': e('wssid').value = ''; e('wpass').value = ''; case 'wpa': e('wki').value = ''; case 'wep': default: break; } xhr.send('wssid='+e('wssid').value+'&wpass='+e('wpass').value+'&wki='+e('wki').value); } else { xhr.send(ctrl.id+'='+ctrl.value); } } function wformchg(initial){ if(initial) e('wtype').value = (e('wssid').value? (e('wki').value? 'wep': 'wpa'): ''); e('wa').style.display = (e('wtype').value==''?'none':'inline'); e('wb').style.display = (e('wtype').value=='wep'?'inline':'none'); if(!initial) e('wformsubmit').style.display = 'inline'; } function timedOut(){ e('content').innerHTML = 'Clock settings page has timed out. Please hold Select for 5 seconds to reactivate it, then <a href=\"./\">refresh</a>.'; } wformchg(true); let timer = setTimeout(timedOut, 120000);</script></body></html>"));
+        client.print(F("</ul></div><script type='text/javascript'>function e(id){ return document.getElementById(id); } function save(ctrl){ if(ctrl.disabled) return; ctrl.disabled = true; let ind = ctrl.nextSibling; if(ind && ind.tagName==='SPAN') ind.parentNode.removeChild(ind); ind = document.createElement('span'); ind.innerHTML = '&nbsp;<span class=\"saving\">Saving&hellip;</span>'; ctrl.parentNode.insertBefore(ind,ctrl.nextSibling); let xhr = new XMLHttpRequest(); xhr.onreadystatechange = function(){ if(xhr.readyState==4){ ctrl.disabled = false; if(xhr.status==200 && !xhr.responseText){ if(ctrl.id=='wform'){ e('content').innerHTML = '<p class=\"ok\">Wi-Fi changes applied.</p><p>' + (e('wssid').value? 'Now attempting to connect to <strong>'+e('wssid').value+'</strong>.</p><p>If successful, the clock will display its IP address. To access this settings page again, connect to <strong>'+e('wssid').value+'</strong> and visit that IP address. (If you miss it, hold Select for 5 seconds to see it again.)</p><p>If not successful, the clock will display <strong>7777</strong>. ': '') + 'To access this settings page again, (re)connect to Wi-Fi network <strong>Clock</strong> and visit <a href=\"http://7.7.7.7\">7.7.7.7</a>.</p>'; clearTimeout(timer); } else { ind.innerHTML = '&nbsp;<span class=\"ok\">OK!</span>'; setTimeout(function(){ if(ind.parentNode) ind.parentNode.removeChild(ind); },1500); } } else ind.innerHTML = '&nbsp;<span class=\"error\">'+xhr.responseText+'</span>'; timer = setTimeout(timedOut, 120000); } }; xhr.open('POST', './', true); xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded'); if(ctrl.id=='wform'){ switch(e('wtype').value){ case '': e('wssid').value = ''; e('wpass').value = ''; case 'wpa': e('wki').value = '0'; case 'wep': default: break; } xhr.send('wssid='+e('wssid').value+'&wpass='+e('wpass').value+'&wki='+e('wki').value); } else { xhr.send(ctrl.id+'='+ctrl.value); } } function wformchg(initial){ if(initial) e('wtype').value = (e('wssid').value? (e('wki').value!=0? 'wep': 'wpa'): ''); e('wa').style.display = (e('wtype').value==''?'none':'inline'); e('wb').style.display = (e('wtype').value=='wep'?'inline':'none'); if(!initial) e('wformsubmit').style.display = 'inline'; } function timedOut(){ e('content').innerHTML = 'Clock settings page has timed out. Please hold Select for 5 seconds to reactivate it, then <a href=\"./\">refresh</a>.'; } wformchg(true); let timer = setTimeout(timedOut, 120000);</script></body></html>"));
         //client.print(F(""));
       } //end get
-      else { //post
-        //TODO do things and possibly return the failed result
+      else { //requestType==2 - handle what was POSTed
+        //client.print(currentLine);
         //syncfreq=hr
         //syncfreq=min
-        //wssid=Riley&You&Me&wpass=5802301644&wki=1234
-        client.print(F("It was: "));
-        client.println(currentLine);
+        if(currentLine.startsWith(F("wssid="))){ //wifi change
+          //e.g. wssid=Network Name&wpass=qwertyuiop&wki=1
+          //TODO since the values are not html-entitied (due to the difficulty of de-entiting here), this will fail if the ssid contains "&wssid=" or pass contains "&wpass="
+          int startPos = 6;
+          int endPos = currentLine.indexOf(F("&wpass="),startPos);
+          wssid = currentLine.substring(startPos,endPos);
+          startPos = endPos+7;
+          endPos = currentLine.indexOf(F("&wki="),startPos);
+          wpass = currentLine.substring(startPos,endPos);
+          startPos = endPos+5;
+          wki = currentLine.substring(startPos).toInt();
+            client.print(F(" wssid="));
+            client.print(wssid);
+            client.print(F(" wpass="));
+            client.print(wpass);
+            client.print(F(" wki="));
+            client.print(wki);
+            client.println();
+          requestType = 3; //triggers an admin restart after the client is closed, below
+        } else {
+          client.print(F("Not yet supported: "));
+          client.println(currentLine);
+        }
       } //end post
     } //end if requestType
     
     if(false){
 
-        switch(requestCode){
+        switch(requestType){
           case 0: //display the full page
 
             break;
@@ -261,11 +280,8 @@ void checkClients(){
         }
         // The HTTP response ends with another blank line:
         client.println();
-        // break out of the while loop:
-        break;
       } //end empty line / end of request
     
-    // close the connection:
     client.stop();
     Serial.println("client disconnected");
   }
